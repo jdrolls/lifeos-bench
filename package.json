@@ -1,0 +1,8 @@
+{
+  "name": "lifeos-bench",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test"
+  }
+}

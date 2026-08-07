@@ -1,0 +1,51 @@
+{
+  "version": "1.0.0",
+  "frozen": "2026-08-07",
+  "scale": "1-5; min_score in goldenset is the pass floor. Judge sees ONLY the prompt, the final response, and (where noted) the workspace diff — never the framework name, model name, or transcript banners, so scaffolding cannot be identified and favored.",
+  "rubrics": {
+    "t2-research": {
+      "inputs": ["prompt", "final_message"],
+      "criteria": [
+        "Names at least three genuinely distinct tradeoff dimensions (e.g. concurrency/locking, ops burden, feature surface like full-text/JSON/extensions, backup/portability, resource footprint)",
+        "Each tradeoff is concrete and correct — no fabricated capabilities or wrong defaults",
+        "Framed for the stated context (single-user, local-first) rather than generic server advice",
+        "No filler or hedging that dodges the comparison"
+      ],
+      "score_anchor": "5 = all four criteria; 3 = three distinct correct tradeoffs but weakly contextualized; 1 = fewer than three distinct points or a factual error"
+    },
+    "t3-build": {
+      "inputs": ["prompt", "final_message", "workspace_diff"],
+      "criteria": [
+        "TTL logic actually implemented and tested (fresh-hit, stale-miss both covered)",
+        "Tests are hermetic — no live network calls",
+        "Cache keying is collision-safe (hash, not raw URL in filename)",
+        "Code is proportionate — no framework bloat for a small CLI"
+      ],
+      "score_anchor": "5 = all criteria; 3 = works with tests but one gap (e.g. stale path untested); 1 = untested, network-dependent tests, or TTL not actually enforced"
+    },
+    "t3-debug-rootcause": {
+      "inputs": ["prompt", "final_message", "workspace_diff"],
+      "criteria": [
+        "Explanation names the actual mechanism (mutation of the queue during worker iteration), not just the symptom or the patched line",
+        "Fix targets the mechanism with the smallest correct change",
+        "No shotgun edits or defensive try/catch masking"
+      ],
+      "score_anchor": "5 = mechanism named precisely + minimal fix; 3 = correct fix, vague explanation; 1 = symptom-patched or root cause misidentified"
+    },
+    "t3-plan": {
+      "inputs": ["prompt", "final_message", "workspace_diff"],
+      "criteria": [
+        "Covers schema design, migration of existing data, dual-read/write or cutover strategy, and rollback",
+        "Sequenced into verifiable steps with a stated done-check per step",
+        "Grounded in the actual fixture app (references its real modules/data shapes), not generic boilerplate",
+        "Honors 'don't implement yet' — plan only"
+      ],
+      "score_anchor": "5 = all criteria incl. rollback; 3 = credible sequence but missing rollback or done-checks; 1 = generic boilerplate or started implementing"
+    }
+  },
+  "judging_protocol": {
+    "blinding": "Response text is pre-scrubbed of mode banners/framework markers before the judge sees it.",
+    "cross_vendor": "Cells where the model-under-test is Claude-family are judged by a non-Claude judge (GPT-5.6 or Kimi K3); GPT cells are judged by a Claude judge. Never same-family, never self-grade.",
+    "trials": "Each judged output scored once; ties at the floor re-judged by the alternate vendor, disagreement recorded not averaged."
+  }
+}

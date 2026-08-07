@@ -1,0 +1,5 @@
+[test]
+# Fixture projects contain intentionally-failing baseline tests (t2-bugfix, t3-debug,
+# t4-ambiguous) — the benchmark grades models on fixing them. Only the harness's own
+# tests run at the root.
+root = "tests"

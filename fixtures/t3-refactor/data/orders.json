@@ -1,0 +1,7 @@
+[
+  {"region":"East","rep":"Ari","amount":1200,"status":"paid"},
+  {"region":"West","rep":"Bo","amount":900,"status":"paid"},
+  {"region":"East","rep":"Casey","amount":450,"status":"pending"},
+  {"region":"West","rep":"Dee","amount":1800,"status":"paid"},
+  {"region":"North","rep":"Em","amount":700,"status":"paid"}
+]

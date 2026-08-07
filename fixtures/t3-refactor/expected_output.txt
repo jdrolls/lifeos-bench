@@ -1,0 +1,8 @@
+Paid sales report
+=================
+Region Orders Revenue
+West    2 orders $2,700
+East    1 order  $1,200
+North   1 order    $700
+-----------------
+Total: $4,600 across 4 paid orders

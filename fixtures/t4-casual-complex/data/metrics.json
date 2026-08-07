@@ -1,0 +1,15 @@
+{
+  "period": "2026-Q1",
+  "visitors": 18420,
+  "signups": 1284,
+  "activeUsers": 934,
+  "paidUsers": 276,
+  "monthlyRecurringRevenue": 24380,
+  "churnRate": 0.034,
+  "conversionRate": 0.0697,
+  "averageOrderValue": 88.33,
+  "supportTickets": 147,
+  "averageResponseHours": 3.8,
+  "uptimePercent": 99.96,
+  "netPromoterScore": 48
+}
