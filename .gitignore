@@ -1,0 +1,7 @@
+# Never published: staged scaffolding installs + private-lane artifacts
+vendor/
+sandboxes/
+results/**/FORK/transcripts/
+node_modules/
+.cache/
+*.log

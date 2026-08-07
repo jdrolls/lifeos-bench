@@ -1,0 +1,171 @@
+{
+  "version": "1.0.0",
+  "frozen": "2026-08-07",
+  "note": "Frozen BEFORE any benchmark runs. Changes require a version bump and invalidate cross-version comparability.",
+  "prompts": [
+    {
+      "id": "t1-fact",
+      "tier": "T1",
+      "prompt": "What port does nginx listen on by default for plain HTTP?",
+      "fixture": null,
+      "expectations": [
+        { "grader": "code:regex", "target": "final_message", "pattern": "\\b80\\b", "name": "correct_answer" },
+        { "grader": "code:routing", "expect_mode": "light", "name": "routed_light" }
+      ]
+    },
+    {
+      "id": "t1-edit",
+      "tier": "T1",
+      "prompt": "In notes/todo.md, change 'buy milk' to 'buy oat milk'. Nothing else.",
+      "fixture": "t1-edit",
+      "expectations": [
+        { "grader": "code:file_contains", "file": "notes/todo.md", "pattern": "buy oat milk", "name": "edit_applied" },
+        { "grader": "code:file_not_contains", "file": "notes/todo.md", "pattern": "buy milk\\n", "name": "old_text_gone" },
+        { "grader": "code:workspace_diff_count", "max_changed_files": 1, "name": "no_collateral_edits" },
+        { "grader": "code:routing", "expect_mode": "light", "name": "routed_light" }
+      ]
+    },
+    {
+      "id": "t1-ack",
+      "tier": "T1",
+      "prompt": "thanks, that's all for now",
+      "fixture": null,
+      "expectations": [
+        { "grader": "code:max_tool_calls", "max": 0, "name": "no_tools_fired" },
+        { "grader": "code:routing", "expect_mode": "light", "name": "routed_light" }
+      ]
+    },
+    {
+      "id": "t1-time",
+      "tier": "T1",
+      "prompt": "Convert 14:30 UTC to US Mountain Daylight Time.",
+      "fixture": null,
+      "expectations": [
+        { "grader": "code:regex", "target": "final_message", "pattern": "(08:30|8:30)", "name": "correct_answer" },
+        { "grader": "code:routing", "expect_mode": "light", "name": "routed_light" }
+      ]
+    },
+    {
+      "id": "t2-bugfix",
+      "tier": "T2",
+      "prompt": "The test in this repo is failing. Find the bug and fix it. Do not modify the test.",
+      "fixture": "t2-bugfix",
+      "expectations": [
+        { "grader": "code:command_exit0", "command": "bun test", "name": "tests_pass" },
+        { "grader": "code:file_unchanged", "file": "src/paginate.test.ts", "name": "test_untouched" }
+      ]
+    },
+    {
+      "id": "t2-script",
+      "tier": "T2",
+      "prompt": "Write a bun script at tools/count.ts that counts total lines across all .md files under docs/ and prints only the number.",
+      "fixture": "t2-script",
+      "expectations": [
+        { "grader": "code:command_output", "command": "bun tools/count.ts", "expect_stdout": "247", "name": "correct_count" }
+      ]
+    },
+    {
+      "id": "t2-research",
+      "tier": "T2",
+      "prompt": "Summarize the three main tradeoffs between SQLite and Postgres for a single-user local-first app. Be concrete.",
+      "fixture": null,
+      "expectations": [
+        { "grader": "judge:rubric", "rubric": "t2-research", "min_score": 3, "name": "quality_floor" }
+      ]
+    },
+    {
+      "id": "t2-csv",
+      "tier": "T2",
+      "prompt": "Look at data/sales.csv and tell me which month had the highest total revenue, and what that total was.",
+      "fixture": "t2-csv",
+      "expectations": [
+        { "grader": "code:regex", "target": "final_message", "pattern": "(?i)march", "name": "correct_month" },
+        { "grader": "code:regex", "target": "final_message", "pattern": "48,?720", "name": "correct_total" }
+      ]
+    },
+    {
+      "id": "t3-build",
+      "tier": "T3",
+      "prompt": "Build a small CLI at src/fetchcache.ts: it takes a URL, fetches it, caches the response body to .cache/ keyed by URL hash with a 60s TTL, and serves from cache when fresh. Include tests that don't hit the network (mock or local fixtures). Make the tests pass.",
+      "fixture": "t3-build",
+      "expectations": [
+        { "grader": "code:command_exit0", "command": "bun test", "name": "tests_pass" },
+        { "grader": "code:file_exists", "file": "src/fetchcache.ts", "name": "artifact_exists" },
+        { "grader": "code:routing", "expect_mode": "heavy", "name": "routed_heavy" },
+        { "grader": "judge:rubric", "rubric": "t3-build", "min_score": 3, "name": "quality_floor" }
+      ]
+    },
+    {
+      "id": "t3-debug",
+      "tier": "T3",
+      "prompt": "bun test fails in this repo. The bug is somewhere in the interaction between the three modules in src/. Find the root cause and fix it with the smallest correct change. Explain the root cause.",
+      "fixture": "t3-debug",
+      "expectations": [
+        { "grader": "code:command_exit0", "command": "bun test", "name": "tests_pass" },
+        { "grader": "code:workspace_diff_count", "max_changed_files": 2, "name": "surgical_fix" },
+        { "grader": "judge:rubric", "rubric": "t3-debug-rootcause", "min_score": 3, "name": "root_cause_named" }
+      ]
+    },
+    {
+      "id": "t3-refactor",
+      "tier": "T3",
+      "prompt": "Refactor src/report.ts so pure computation is separated from file IO (two modules). Behavior must not change: bun run src/report.ts must produce byte-identical output to before. Keep the existing test green and add tests for the pure module.",
+      "fixture": "t3-refactor",
+      "expectations": [
+        { "grader": "code:command_exit0", "command": "bun test", "name": "tests_pass" },
+        { "grader": "code:command_output_matches_fixture", "command": "bun run src/report.ts", "fixture_file": "expected_output.txt", "name": "behavior_preserved" }
+      ]
+    },
+    {
+      "id": "t3-plan",
+      "tier": "T3",
+      "prompt": "Create a plan for migrating this app from JSON-file storage to SQLite. Don't implement anything yet.",
+      "fixture": "t3-plan",
+      "expectations": [
+        { "grader": "code:workspace_diff_count", "max_changed_files": 0, "name": "plan_means_stop" },
+        { "grader": "judge:rubric", "rubric": "t3-plan", "min_score": 3, "name": "plan_quality" }
+      ]
+    },
+    {
+      "id": "t4-casual-complex",
+      "tier": "T4",
+      "prompt": "build me a quick stats page for the numbers in data/metrics.json, nothing fancy",
+      "fixture": "t4-casual-complex",
+      "expectations": [
+        { "grader": "code:routing", "expect_mode": "heavy", "name": "casual_phrasing_not_downgraded" },
+        { "grader": "code:file_exists_any", "patterns": ["*.html", "src/*.html", "public/*.html"], "name": "artifact_exists" }
+      ]
+    },
+    {
+      "id": "t4-formal-trivial",
+      "tier": "T4",
+      "prompt": "Please perform a comprehensive analysis to determine which of the following two numbers is larger: 7 or 12.",
+      "fixture": null,
+      "expectations": [
+        { "grader": "code:regex", "target": "final_message", "pattern": "12", "name": "correct_answer" },
+        { "grader": "code:routing", "expect_mode": "light", "name": "formal_phrasing_not_upgraded" },
+        { "grader": "code:token_budget", "max_output_tokens": 400, "name": "no_overkill" }
+      ]
+    },
+    {
+      "id": "t4-ambiguous",
+      "tier": "T4",
+      "prompt": "my tests are failing",
+      "fixture": "t4-ambiguous",
+      "expectations": [
+        { "grader": "code:transcript_contains_command", "pattern": "bun test", "before_first_edit": true, "name": "reproduced_before_fixing" },
+        { "grader": "code:command_exit0", "command": "bun test", "name": "tests_pass_after" }
+      ]
+    },
+    {
+      "id": "t4-multi",
+      "tier": "T4",
+      "prompt": "rename this project from 'foldx' to 'nimbus' everywhere it matters and make sure nothing still references the old name",
+      "fixture": "t4-multi",
+      "expectations": [
+        { "grader": "code:command_output", "command": "grep -ri foldx --include='*.ts' --include='*.json' --include='*.md' . | grep -v node_modules | wc -l | tr -d ' '", "expect_stdout": "0", "name": "no_stale_references" },
+        { "grader": "code:command_exit0", "command": "bun test", "name": "tests_still_pass" }
+      ]
+    }
+  ]
+}
