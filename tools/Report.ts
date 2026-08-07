@@ -2,11 +2,11 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ensure, exists, json, path } from "./Common.ts";
 
-type Row = { version: string; model: string; prompt_id: string; trial: number; grader: string; status: string; detail: string };
+type Row = { version: string; model: string; prompt_id: string; trial: number; grader: string; status: string; detail?: string; reasoning?: string };
 const percent = (numerator: number, denominator: number) => denominator ? `${(100 * numerator / denominator).toFixed(1)}%` : "—";
 async function main() {
-  const config = await json<any>(path("bench.config.json")); const golden = await json<any>(path("goldenset/goldenset.json")); const gradeFile = path("results", "phase1", "grades.jsonl");
-  const raw = await exists(gradeFile) ? await readFile(gradeFile, "utf8") : ""; const latest = new Map<string, Row>(); for (const line of raw.split("\n")) { if (!line.trim()) continue; try { const row = JSON.parse(line) as Row; latest.set([row.version,row.model,row.prompt_id,row.trial,row.grader].join("|"), row); } catch { /* report valid rows only */ } }
+  const config = await json<any>(path("bench.config.json")); const golden = await json<any>(path("goldenset/goldenset.json")); const gradeFile = path("results", "phase1", "grades.jsonl"); const judgeFile = path("results", "phase1", "judge-grades.jsonl");
+  const raw = await exists(gradeFile) ? await readFile(gradeFile, "utf8") : ""; const judgeRaw = await exists(judgeFile) ? await readFile(judgeFile, "utf8") : ""; const latest = new Map<string, Row>(); for (const line of `${raw}\n${judgeRaw}`.split("\n")) { if (!line.trim()) continue; try { const row = JSON.parse(line) as Row; latest.set([row.version,row.model,row.prompt_id,row.trial,row.grader].join("|"), row); } catch { /* report valid rows only */ } }
   const rows = [...latest.values()]; const lines = ["# Phase 1 Report", "", "## Version × model", "", "| Version | Model | Routing-correct | Task pass@k | Task pass^k | Mean tokens | Mean wall-clock |", "|---|---:|---:|---:|---:|---:|---:|"];
   const metrics = async (version: string, model: string, tier?: string) => {
     const prompts = golden.prompts.filter((prompt: any) => !tier || prompt.tier === tier); let routingPass = 0, routingTotal = 0, anyPass = 0, allPass = 0, tokenSum = 0, wallSum = 0, metaCount = 0;
@@ -17,7 +17,7 @@ async function main() {
       }
       if (passes.length) { if (passes.some(Boolean)) anyPass++; if (passes.length === trialCount && passes.every(Boolean)) allPass++; }
     }
-    const taskPrompts = prompts.filter((prompt: any) => prompt.expectations.some((e: any) => e.grader !== "code:routing" && e.grader !== "judge:rubric")).length;
+    const taskPrompts = prompts.filter((prompt: any) => prompt.expectations.some((e: any) => e.grader !== "code:routing")).length;
     return { routing: percent(routingPass, routingTotal), atK: percent(anyPass, taskPrompts), allK: percent(allPass, taskPrompts), tokens: metaCount ? (tokenSum / metaCount).toFixed(1) : "—", wall: metaCount ? `${(wallSum / metaCount / 1000).toFixed(2)}s` : "—" };
   };
   for (const version of config.versions) for (const model of config.models) { const metric = await metrics(version.id, model.id); lines.push(`| ${version.id} | ${model.id} | ${metric.routing} | ${metric.atK} | ${metric.allK} | ${metric.tokens} | ${metric.wall} |`); }
