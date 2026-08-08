@@ -1,7 +1,10 @@
 # Never published: staged scaffolding installs + private-lane artifacts
 vendor/
 sandboxes/
-results/**/FORK/transcripts/
+# FORK lane: only aggregated metric rows are published (grades/judge/REPORT);
+# per-cell artifacts derive from a private scaffold and stay local
+results/phase1/FORK/
+results/phase1-polluted/
 node_modules/
 .cache/
 *.log
