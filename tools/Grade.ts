@@ -39,8 +39,13 @@ function outcome(status: GradeStatus, detail: string): { status: GradeStatus; de
   return { status, detail };
 }
 
+export { compile as compileForTest };
 function compile(pattern: unknown): RegExp {
   if (typeof pattern !== "string") throw new Error("pattern must be a string");
+  // JS RegExp rejects PCRE inline flags like (?i)… — translate a leading flag group to
+  // real flags instead of letting the grader die (which previously read as a task fail).
+  const inline = pattern.match(/^\(\?([ims]+)\)/);
+  if (inline) return new RegExp(pattern.slice(inline[0].length), inline[1]);
   return new RegExp(pattern);
 }
 
@@ -239,7 +244,9 @@ export async function gradeExpectation(expectation: Expectation, context: GradeC
 
     return fail(`unsupported grader ${type}`);
   } catch (error) {
-    return outcome("fail", `grader configuration or execution error: ${error instanceof Error ? error.message : String(error)}`);
+    // A broken grader must be loud, never a silent task "fail" — a grader bug otherwise
+    // reads as a model failure and poisons the benchmark numbers.
+    return outcome("grader_error" as GradeStatus, `grader configuration or execution error: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

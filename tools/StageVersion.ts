@@ -132,11 +132,13 @@ async function stageFork(destination: string, source: string): Promise<void> {
   if (!(await exists(forkUser))) throw new Error("fixtures/_synthetic-user-fork is missing");
   await rm(join(destination, "PAI", "USER"), { recursive: true, force: true });
   await copyTree(forkUser, join(destination, "PAI", "USER"));
-  // Hook registrations reference the live tree by absolute path; point them at the
-  // sandbox so sandbox sessions execute sandbox hooks (env is expanded by the shell).
+  // Hook registrations reference the live tree by absolute path; neutralize them here so
+  // the scrub gate passes, then inject the real absolute sandbox path AFTER the gate (the
+  // hooks do NOT expand $VAR syntax in these fields — a literal "$CLAUDE_CONFIG_DIR" dir
+  // ends up inside the graded workspace and poisons collateral-edit graders).
   const settingsFile = join(destination, "settings.json");
   const settings = await readFile(settingsFile, "utf8");
-  await writeFile(settingsFile, settings.split(join(source)).join("$CLAUDE_CONFIG_DIR"));
+  await writeFile(settingsFile, settings.split(join(source)).join("__SANDBOX_ROOT__"));
   // Hooks write observability/session state relative to the config dir at runtime.
   await ensure(join(destination, "PAI", "MEMORY", "OBSERVABILITY"));
   await ensure(join(destination, "PAI", "MEMORY", "WORK"));
@@ -170,8 +172,14 @@ async function main(): Promise<void> {
     // The required containment gate applies to the local fork where source content
     // can be private. L7 is an untouched public upstream payload plus fake user data.
     if (version === "FORK") await assertScrubbed(destination);
-    // Auth is injected AFTER the scrub gate on purpose: credentials are account-identifying
-    // and would (correctly) trip it. Sandboxes are gitignored — this never leaves the machine.
+    // Post-scrub injections: values that would (correctly) trip the gate but never leave
+    // this machine. 1) the sandbox's own absolute path into hook registrations…
+    if (version === "FORK") {
+      const settingsFile = join(destination, "settings.json");
+      const settings = await readFile(settingsFile, "utf8");
+      await writeFile(settingsFile, settings.split("__SANDBOX_ROOT__").join(destination));
+    }
+    // …2) auth: credentials are account-identifying. Sandboxes are gitignored.
     // ALL sandboxes symlink ONE shared credentials file: per-sandbox copies fork the OAuth
     // refresh chain — the first run to refresh rotates the token and orphans every other copy.
     await ensure(sharedAuthDirectory);

@@ -110,3 +110,15 @@ describe("Grade code graders", () => {
     expect(await status({ grader: "judge:rubric", rubric: "quality" }, await context())).toBe("pending_judge");
   });
 });
+
+import { test as t2, expect as e2 } from "bun:test";
+import { compileForTest } from "../tools/Grade.ts";
+
+t2("inline (?i) flag compiles and matches case-insensitively", () => {
+  e2(compileForTest("(?i)march").test("March had the highest")).toBe(true);
+  e2(compileForTest("(?i)march").test("no month here")).toBe(false);
+});
+
+t2("invalid regex surfaces as thrown error, not silent fail", () => {
+  e2(() => compileForTest("(?bad)x")).toThrow();
+});

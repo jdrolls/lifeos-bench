@@ -233,9 +233,15 @@ async function pendingJudgments(limit?: number): Promise<PendingJudgment[]> {
     if (!(await exists(join(trialDirectory, "meta.json")))) continue;
     const meta = await json<TrialMeta>(join(trialDirectory, "meta.json"));
     if (typeof meta.final_message !== "string") throw new Error(`trial ${source.prompt_id}/trial-${source.trial} has no final_message`);
-    const workspaceDiff = rubric.inputs.includes("workspace_diff")
+    // Build-tier cells produce multi-MB diffs (lockfiles, caches) that overflow ARG_MAX
+    // downstream (E2BIG). 40KB is plenty for rubric judging; mark the cut honestly.
+    const DIFF_CAP = 40_000;
+    let workspaceDiff = rubric.inputs.includes("workspace_diff")
       ? await readFile(join(trialDirectory, "workspace-diff.txt"), "utf8")
       : undefined;
+    if (workspaceDiff !== undefined && workspaceDiff.length > DIFF_CAP) {
+      workspaceDiff = `${workspaceDiff.slice(0, DIFF_CAP)}\n\n[diff truncated at ${DIFF_CAP} bytes of ${workspaceDiff.length}]`;
+    }
     judgments.push({ source, rubricName: expectation.rubric, rubric, minScore: expectation.min_score, prompt: prompt.prompt, finalMessage: meta.final_message, workspaceDiff });
   }
   return judgments;
