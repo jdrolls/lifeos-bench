@@ -31,7 +31,9 @@ type PendingJudgment = {
 export type JudgeReply = { score: number; reasoning: string; criteria_met: string[] };
 type JudgeResult = { reply: JudgeReply | null; error: string | null; attempts: number };
 
-const JUDGE_TIMEOUT_MS = 120_000;
+// 300s: diff-bearing rubrics (t3-debug) legitimately take >120s — a shorter timeout
+// killed the judge mid-reply and surfaced as "no valid JSON" (reproducible, not transient).
+const JUDGE_TIMEOUT_MS = 300_000;
 const BLINDING_MARKERS = /♻|═══|\bPAI\b|\bALGORITHM\b|\bNATIVE MODE\b|\bMINIMAL\b|🗣️|LifeOS/i;
 
 function key(row: Pick<GradeRow, "version" | "model" | "prompt_id" | "trial" | "grader">): string {
@@ -114,14 +116,36 @@ export function extractLastJudgeReply(output: string): JudgeReply | null {
   return isJudgeReply(last) ? last : null;
 }
 
+/**
+ * The judge emits its verdict as one JSON line, but the surrounding transcript can carry
+ * unbalanced braces (code fences, diff hunks) that desync a depth-scanning parser. Scan
+ * whole lines from the end first; fall back to the depth scanner for wrapped output.
+ */
+export function extractJudgeReply(output: string): JudgeReply | null {
+  const lines = output.split(/\r?\n/);
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index].trim();
+    if (!line.startsWith("{") || !line.endsWith("}")) continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (isJudgeReply(parsed)) return parsed;
+    } catch { /* transcript noise */ }
+  }
+  return extractLastJudgeReply(output);
+}
+
 /** Execute at most twice, retrying a malformed response (or command failure) once. */
 export async function judgeWithRetry(invoke: () => Promise<string>): Promise<JudgeResult> {
   let lastError: string | null = null;
   for (let attempts = 1; attempts <= 2; attempts++) {
     try {
-      const reply = extractLastJudgeReply(await invoke());
+      const output = await invoke();
+      const reply = extractJudgeReply(output);
       if (reply) return { reply, error: null, attempts };
       lastError = "judge returned no valid JSON reply";
+      if (Bun.env.JUDGE_DEBUG_DIR) {
+        await writeFile(join(Bun.env.JUDGE_DEBUG_DIR, `judge-fail-${Date.now()}.txt`), output);
+      }
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }
@@ -204,6 +228,9 @@ async function pendingJudgments(limit?: number): Promise<PendingJudgment[]> {
       throw new Error(`rubric ${expectation.rubric} has an invalid min_score`);
     }
     const trialDirectory = path("results", "phase1", source.version, source.model, source.prompt_id, `trial-${source.trial}`);
+    // A missing meta.json means the fleet is mid-rerun of this trial (RunCell wipes the
+    // trial dir first) — skip it; the re-run emits a fresh pending_judge row to pick up.
+    if (!(await exists(join(trialDirectory, "meta.json")))) continue;
     const meta = await json<TrialMeta>(join(trialDirectory, "meta.json"));
     if (typeof meta.final_message !== "string") throw new Error(`trial ${source.prompt_id}/trial-${source.trial} has no final_message`);
     const workspaceDiff = rubric.inputs.includes("workspace_diff")

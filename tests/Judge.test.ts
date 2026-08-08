@@ -44,3 +44,23 @@ describe("Judge JSON extraction", () => {
     expect(result.error).toBeNull();
   });
 });
+
+import { extractJudgeReply } from "../tools/Judge.ts";
+import { test, expect } from "bun:test";
+
+test("extractJudgeReply survives unbalanced braces in transcript", () => {
+  const transcript = [
+    "codex transcript",
+    "while (queue.size > 0) {",   // unbalanced open brace
+    "@@ -4,8 +4,7 @@ }",          // stray close brace
+    '{"score":5,"reasoning":"ok","criteria_met":["a"]}',
+    "tokens used",
+    "634",
+  ].join("\n");
+  expect(extractJudgeReply(transcript)?.score).toBe(5);
+});
+
+test("extractJudgeReply falls back to depth scan for wrapped JSON", () => {
+  const transcript = 'noise {"score":3,\n"reasoning":"multi-line",\n"criteria_met":[]} trailing';
+  expect(extractJudgeReply(transcript)?.score).toBe(3);
+});
