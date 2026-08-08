@@ -12,10 +12,14 @@
   ],
   "models": [
     { "id": "fable-5",  "cli_arg": "claude-fable-5" },
-    { "id": "sonnet-5", "cli_arg": "claude-sonnet-5" }
+    { "id": "sonnet-5", "cli_arg": "claude-sonnet-5" },
+    { "id": "haiku-4-5", "cli_arg": "claude-haiku-4-5-20251001" }
+  ],
+  "gpt_models": [
+    { "id": "gpt-5.6-terra", "versions": ["RAW", "L7"] }
   ],
   "trials": { "T1": 1, "T2": 1, "T3": 2, "T4": 2 },
-  "expected_runs": 144,
+  "expected_runs": 216,
   "runner": {
     "detached": true,
     "billing": "subscription-oauth (scrub ANTHROPIC_API_KEY + ANTHROPIC_AUTH_TOKEN; never --bare)",

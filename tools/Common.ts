@@ -30,3 +30,25 @@ export function changed(before: Record<string, string>, after: Record<string, st
   return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((key) => before[key] !== after[key]).sort();
 }
 export function arg(name: string): string | undefined { const i = Bun.argv.indexOf(name); return i < 0 ? undefined : Bun.argv[i + 1]; }
+
+/**
+ * Produce a git-style tree diff without requiring either directory to be a repository.
+ * `git diff --no-index` returns 1 when it found changes, which is a successful outcome here.
+ */
+export async function gitWorkspaceDiff(before: string, after: string): Promise<{ diff: string; error?: string }> {
+  try {
+    const proc = Bun.spawn(["git", "diff", "--no-index", "--no-ext-diff", "--", before, after], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    if (exitCode === 0 || exitCode === 1) return { diff: stdout || "No workspace changes\n" };
+    return { diff: stdout || "", error: `git diff failed with exit ${exitCode}: ${stderr.trim()}` };
+  } catch (error) {
+    return { diff: "", error: `git diff could not launch: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}

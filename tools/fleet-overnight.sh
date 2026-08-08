@@ -15,7 +15,9 @@ NOW=$(date +%s)
 if [ "$NOW" -lt "$START_EPOCH" ]; then
   sleep $(( START_EPOCH - NOW ))
 fi
-echo "$(date '+%F %T') fleet starting (144 runs, concurrency from config)" >> results/phase1/fleet.log
+# GPT-engine cells need the codex command template; harmless for claude-engine cells.
+export CODEX_RUN_CMD="${CODEX_RUN_CMD:-bun /Users/<REDACTED>/.claude/PAI/Tools/CodexExec.ts --model gpt-5.6-terra --sandbox workspace-write --cwd {workspace} --prompt-file {promptfile}}"
+echo "$(date '+%F %T') fleet starting ($(bun tools/Fleet.ts --dry-run | wc -l | tr -d ' ') planned cells, concurrency from config)" >> results/phase1/fleet.log
 bun tools/Fleet.ts >> results/phase1/fleet.log 2>&1
 echo "$(date '+%F %T') fleet finished exit=$?" >> results/phase1/fleet.log
 bun tools/Report.ts >> results/phase1/fleet.log 2>&1

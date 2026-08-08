@@ -3,40 +3,69 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { arg, changed, copyTree, ensure, exists, gitWorkspaceDiff, json, path, reset, snapshot, writeJson } from "./Common.ts";
 import { gradeTrial } from "./Grade.ts";
-
-type ResultEvent = {
-  type?: string;
-  result?: string;
-  usage?: Record<string, number>;
-  total_cost_usd?: number;
-};
+import { writePromptPack } from "./PromptPack.ts";
 
 type BenchConfig = {
-  models: Array<{ id: string; cli_arg: string }>;
   versions: Array<{ id: string }>;
+  gpt_models?: Array<{ id: string; versions: string[] }>;
   runner: { timeout_per_run_s: number };
 };
 type GoldenSet = { prompts: Array<{ id: string; prompt: string; fixture: string | null }> };
 
-function finalResultEvent(transcript: string): ResultEvent | undefined {
-  for (const line of transcript.split(/\r?\n/).reverse()) {
-    if (!line.trim()) continue;
-    try {
-      const event = JSON.parse(line) as ResultEvent;
-      if (event.type === "result") return event;
-    } catch {
-      // Keep malformed output in transcript.jsonl; it is still useful run evidence.
-    }
+type GptMetaInput = {
+  version: string;
+  model: string;
+  promptId: string;
+  trial: number;
+  fixture: string | null;
+  status: "success" | "failed" | "timeout";
+  exitCode: number | null;
+  wallClockMs: number;
+  changedFiles: string[];
+  baseline: Record<string, string>;
+  finalMessage: string;
+  launchError?: string;
+  workspaceDiffError?: string;
+};
+
+/** Kept separate so the GPT runner writes the same stable metadata contract as RunCell. */
+export function gptMeta(input: GptMetaInput): Record<string, unknown> {
+  return {
+    version: input.version,
+    model: input.model,
+    prompt_id: input.promptId,
+    trial: input.trial,
+    fixture: input.fixture,
+    status: input.status,
+    exit_code: input.exitCode,
+    wall_clock_ms: input.wallClockMs,
+    token_usage: {},
+    final_message: input.finalMessage,
+    changed_files: input.changedFiles,
+    baseline: input.baseline,
+    ...(input.launchError ? { launch_error: input.launchError } : {}),
+    ...(input.workspaceDiffError ? { workspace_diff_error: input.workspaceDiffError } : {}),
+  };
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function renderCodexCommand(template: string, promptFile: string, workspace: string): string {
+  if (!template.includes("{promptfile}") || !template.includes("{workspace}")) {
+    throw new Error("CODEX_RUN_CMD must contain both {promptfile} and {workspace}");
   }
-  return undefined;
+  return template
+    .replaceAll("{promptfile}", shellQuote(promptFile))
+    .replaceAll("{workspace}", shellQuote(workspace));
 }
 
 function terminateProcessGroup(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pid, signal);
   } catch {
-    // If the process has not created its session yet, signal the launcher itself.
-    try { process.kill(pid, signal); } catch { /* The process already exited. */ }
+    try { process.kill(pid, signal); } catch { /* Process already exited. */ }
   }
 }
 
@@ -46,39 +75,42 @@ async function main(): Promise<void> {
   const promptId = arg("--prompt");
   const trial = Number(arg("--trial"));
   if (!version || !model || !promptId || !Number.isInteger(trial) || trial < 1) {
-    throw new Error("usage: bun tools/RunCell.ts --version V --model M --prompt ID --trial N");
+    throw new Error("usage: bun tools/RunCellGpt.ts --version V --model M --prompt ID --trial N");
   }
 
   const config = await json<BenchConfig>(path("bench.config.json"));
   const golden = await json<GoldenSet>(path("goldenset", "goldenset.json"));
   const prompt = golden.prompts.find((candidate) => candidate.id === promptId);
-  const selectedModel = config.models.find((candidate) => candidate.id === model);
-  if (!prompt || !selectedModel || !config.versions.some((candidate) => candidate.id === version)) {
-    throw new Error("unknown version, model, or prompt");
+  const selectedModel = config.gpt_models?.find((candidate) => candidate.id === model);
+  if (!prompt || !selectedModel || !selectedModel.versions.includes(version) || !config.versions.some((candidate) => candidate.id === version)) {
+    throw new Error("unknown GPT version, model, or prompt");
   }
 
   const sandbox = path("sandboxes", version);
   if (!(await exists(sandbox))) throw new Error(`sandbox has not been staged: ${sandbox}`);
-  const output = path("results", "phase1", version, model, promptId, `trial-${trial}`);
+  const laneVersion = `${version}-GPT`;
+  const output = path("results", "phase1", laneVersion, model, promptId, `trial-${trial}`);
   const workspace = join(output, "workspace");
   const baselineDirectory = join(output, "baseline");
   await reset(output);
   await ensure(workspace);
   if (prompt.fixture) await copyTree(path("fixtures", prompt.fixture), workspace);
-  await copyTree(workspace, baselineDirectory);
 
+  const packFile = await writePromptPack(version);
+  const promptPack = await Bun.file(packFile).text();
+  const promptFile = join(workspace, ".lifeos-bench-prompt.md");
+  await writeFile(promptFile, `${promptPack}\n\n# Task\n${prompt.prompt}`);
+  await copyTree(workspace, baselineDirectory);
   const before = await snapshot(workspace);
   const startedAt = Date.now();
-  const environment: Record<string, string | undefined> = { ...process.env, CLAUDE_CONFIG_DIR: sandbox };
+
+  const template = process.env.CODEX_RUN_CMD;
+  if (!template) throw new Error("CODEX_RUN_CMD is required to run GPT cells");
+  const command = renderCodexCommand(template, promptFile, workspace);
+  const environment: Record<string, string | undefined> = { ...process.env };
   delete environment.ANTHROPIC_API_KEY;
   delete environment.ANTHROPIC_AUTH_TOKEN;
   delete environment.CLAUDECODE;
-  // Long-lived subscription token from `claude setup-token` (see README): rotation-free,
-  // so parallel sandboxes never clobber each other's refresh chains — or the live one.
-  const tokenFile = path("sandboxes", "_auth", "oauth-token");
-  const oauthToken = (await Bun.file(tokenFile).text().catch(() => "")).trim();
-  if (!oauthToken) throw new Error(`missing ${tokenFile} — run setup-token capture before benchmarking`);
-  environment.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
 
   let stdout = "";
   let stderr = "";
@@ -86,17 +118,7 @@ async function main(): Promise<void> {
   let timedOut = false;
   let launchError: string | undefined;
   try {
-    // detached:true gives the CLI its own process group (macOS ships no setsid), so the
-    // timeout can terminate the whole tree rather than orphaning the CLI's children.
-    const child = spawn("claude", [
-      "-p", prompt.prompt,
-      "--model", selectedModel.cli_arg,
-      "--output-format", "stream-json",
-      // stream-json in print mode requires --verbose; sandboxed synthetic workspaces get
-      // the same permission mode on every lane so no framework wins on permission prompts.
-      "--verbose",
-      "--permission-mode", "bypassPermissions",
-    ], { cwd: workspace, env: environment, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("bash", ["-lc", command], { cwd: workspace, env: environment, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     const timeoutMs = Number(config.runner.timeout_per_run_s) * 1_000;
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("runner timeout_per_run_s must be positive");
     child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
@@ -122,37 +144,35 @@ async function main(): Promise<void> {
   }
 
   const transcript = stdout.length === 0 || stdout.endsWith("\n") ? stdout : `${stdout}\n`;
+  // Grade.ts intentionally has one transcript path for all engines. Keep the native text
+  // transcript too, and mirror it at that established path rather than changing grader logic.
+  await writeFile(join(output, "transcript.txt"), transcript);
   await writeFile(join(output, "transcript.jsonl"), transcript);
   if (stderr) await writeFile(join(output, "stderr.txt"), stderr);
 
   const after = await snapshot(workspace);
-  const changedFiles = changed(before, after);
   const diff = await gitWorkspaceDiff(baselineDirectory, workspace);
   await writeFile(join(output, "workspace-diff.txt"), diff.diff || "No workspace changes\n");
-
-  const result = finalResultEvent(transcript);
-  const meta = {
-    version,
+  const meta = gptMeta({
+    version: laneVersion,
     model,
-    prompt_id: promptId,
+    promptId,
     trial,
     fixture: prompt.fixture,
     status: timedOut ? "timeout" : exitCode === 0 && !diff.error ? "success" : "failed",
-    exit_code: exitCode,
-    wall_clock_ms: Date.now() - startedAt,
-    token_usage: result?.usage ?? {},
-    final_message: result?.result ?? "",
-    total_cost_usd: result?.total_cost_usd,
-    changed_files: changedFiles,
+    exitCode,
+    wallClockMs: Date.now() - startedAt,
+    changedFiles: changed(before, after),
     baseline: before,
-    ...(launchError ? { launch_error: launchError } : {}),
-    ...(diff.error ? { workspace_diff_error: diff.error } : {}),
-  };
+    finalMessage: transcript.trimEnd(),
+    launchError,
+    workspaceDiffError: diff.error,
+  });
   await writeJson(join(output, "meta.json"), meta);
 
-  const grades = await gradeTrial(version, model, promptId, trial);
+  const grades = await gradeTrial(laneVersion, model, promptId, trial);
   console.log(JSON.stringify({
-    version,
+    version: laneVersion,
     model,
     prompt_id: promptId,
     trial,

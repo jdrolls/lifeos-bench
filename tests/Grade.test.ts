@@ -103,6 +103,7 @@ describe("Grade code graders", () => {
   test("routing matches configured mode and skips null markers", async () => {
     const ctx = await context({ transcript: "... LIGHT ..." });
     expect(await status({ grader: "code:routing", expect_mode: "light" }, ctx)).toBe("pass");
+    expect(await status({ grader: "code:routing", expect_mode: "light" }, await context({ version: "L7-GPT", transcript: "... LIGHT ..." }))).toBe("pass");
     expect(await status({ grader: "code:routing", expect_mode: "heavy" }, await context({ version: "RAW" }))).toBe("skipped");
   });
 

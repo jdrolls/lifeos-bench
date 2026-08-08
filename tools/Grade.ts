@@ -235,7 +235,10 @@ export async function gradeExpectation(expectation: Expectation, context: GradeC
     }
 
     if (type === "code:routing") {
-      const markers = context.config.versions?.find((version) => version.id === context.version)?.routing_markers;
+      // GPT lanes retain the source scaffold's routing contract while using a distinct
+      // result namespace, so L7-GPT resolves L7's markers without changing base lanes.
+      const routingVersion = context.version.endsWith("-GPT") ? context.version.slice(0, -4) : context.version;
+      const markers = context.config.versions?.find((version) => version.id === routingVersion)?.routing_markers;
       const mode = typeof expectation.expect_mode === "string" ? expectation.expect_mode : "";
       const marker = markers?.[mode];
       if (marker === null || marker === undefined) return outcome("skipped", "routing markers unavailable for this version");
