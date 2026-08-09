@@ -13,10 +13,12 @@ Stages a scaffolding version into `sandboxes/<VERSION_ID>/`:
   orchestrator) into the sandbox config-dir layout the version expects. Overlay synthetic user
   files from `fixtures/_synthetic-user/` (create these: a fake TELOS.md, fake identity files
   matching upstream's documented USER/ shape — invented person "Alex Doe", no real data).
-- `FORK`: copy CLAUDE.md + PAI/ scaffolding from a source dir given via `--fork-src` flag,
-  overlay the same synthetic user files REPLACING all USER/ content. Refuse to run if the
-  result still contains the strings "<REDACTED>", "<REDACTED>", "<REDACTED>", or "<REDACTED>"
-  (containment scrub gate — grep the staged tree, non-zero exit on any hit).
+- `FORK`: **retired from the published matrix.** The staging path remains available behind
+  `--fork-src` for local experiments, but no fork lane is benchmarked or reported.
+- Containment scrub gate: refuse to stage if the result contains any operator-identity
+  token. The token list is the single source of truth in `tools/LeakCheck.ts`, assembled
+  from fragments at runtime — do NOT restate the literals in documentation, or the docs
+  become the leak the gate exists to prevent.
 - Idempotent; `--force` re-stages.
 
 ### 2. `tools/RunCell.ts`

@@ -13,8 +13,9 @@ Priorities and non-negotiables:
   file_exists, file_exists_any, file_unchanged, workspace_diff_count, max_tool_calls,
   token_budget, command_exit0, command_output, command_output_matches_fixture,
   transcript_contains_command with before_first_edit, routing with null-marker skip).
-- `StageVersion.ts`: RAW/L7/FORK staging per SPEC.md incl. the containment scrub gate
-  (grep staged tree for "<REDACTED>|<REDACTED>|rhds\.dev|<REDACTED>" → non-zero exit on hit).
+- `StageVersion.ts`: RAW/L5/L6/L7 staging per SPEC.md incl. the containment scrub gate
+  (grep the staged tree for the operator-identity tokens defined in `tools/LeakCheck.ts`
+  → non-zero exit on hit; the literals live only in that file, never in documentation).
   Upstream layout note: the v7.28.3 checkout's install payload lives under
   `vendor/LifeOS/LifeOS/install/` — inspect it and map it to the sandbox config-dir shape.
 - `Fleet.ts`: resume-safe, concurrency from config, `--dry-run` (exactly 144 runs,
