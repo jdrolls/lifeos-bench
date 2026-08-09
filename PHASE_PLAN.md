@@ -103,8 +103,9 @@ bun tools/Report.ts
 ```
 
 Judges stay blinded and cross-vendor: Claude-family cells judged by GPT, GPT cells by Claude.
-`scrubResponse` strips banners before the judge sees anything — it needs a new entry for
-`════ LifeOS` or v7 cells will be identifiable by their own format.
+`scrubResponse` strips banner lines before the judge sees anything; its `BLINDING_MARKERS`
+already covers `═══`, `LifeOS`, `♻`, and the `🗣️` closer, so v5/v6/v7 formats are all
+stripped. Re-check it if any version's banner changes.
 
 ## Phase 5 — hardening
 
@@ -133,7 +134,6 @@ Judges stay blinded and cross-vendor: Claude-family cells judged by GPT, GPT cel
 
 ## Known open items
 
-- `Judge.ts` `BLINDING_MARKERS` needs `════ LifeOS` added.
 - `t5-conflict`'s `helper_produced` check accepts any language by design; the rubric carries
   the actual judgement. Confirm the judge is strict about acknowledgement.
 - RAW rows show `—` for routing and format by construction, not by missing data.
