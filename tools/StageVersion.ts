@@ -177,7 +177,15 @@ async function main(): Promise<void> {
     if (version === "FORK") {
       const settingsFile = join(destination, "settings.json");
       const settings = await readFile(settingsFile, "utf8");
-      await writeFile(settingsFile, settings.split("__SANDBOX_ROOT__").join(destination));
+      const parsed = JSON.parse(settings.split("__SANDBOX_ROOT__").join(destination));
+      // The fork enforces a Claude-only model allowlist (enforceAvailableModels), which
+      // silently coerces cross-vendor --model args back onto Claude ids. A GPT port must
+      // strip this policy guard, so the benchmark sandbox does too; Claude lanes are
+      // unaffected (their models were all allowed anyway).
+      delete parsed.enforceAvailableModels;
+      delete parsed.availableModels;
+      delete parsed.fallbackModel;
+      await writeFile(settingsFile, `${JSON.stringify(parsed, null, 2)}\n`);
     }
     // …2) auth: credentials are account-identifying. Sandboxes are gitignored.
     // ALL sandboxes symlink ONE shared credentials file: per-sandbox copies fork the OAuth

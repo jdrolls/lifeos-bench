@@ -12,7 +12,7 @@ type ResultEvent = {
 };
 
 type BenchConfig = {
-  models: Array<{ id: string; cli_arg: string }>;
+  models: Array<{ id: string; cli_arg: string; engine?: "claudex" }>;
   versions: Array<{ id: string }>;
   runner: { timeout_per_run_s: number };
 };
@@ -73,12 +73,29 @@ async function main(): Promise<void> {
   delete environment.ANTHROPIC_API_KEY;
   delete environment.ANTHROPIC_AUTH_TOKEN;
   delete environment.CLAUDECODE;
-  // Long-lived subscription token from `claude setup-token` (see README): rotation-free,
-  // so parallel sandboxes never clobber each other's refresh chains — or the live one.
-  const tokenFile = path("sandboxes", "_auth", "oauth-token");
-  const oauthToken = (await Bun.file(tokenFile).text().catch(() => "")).trim();
-  if (!oauthToken) throw new Error(`missing ${tokenFile} — run setup-token capture before benchmarking`);
-  environment.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+  if (selectedModel.engine === "claudex") {
+    // claudex lane: same CC harness, GPT backend via the local CLIProxyAPI. Proxy key
+    // replaces Anthropic auth; ChatGPT-side billing is flat-rate through the proxy.
+    environment.ANTHROPIC_BASE_URL = Bun.env.CLAUDEX_PROXY_URL ?? "http://127.0.0.1:8317";
+    environment.ANTHROPIC_AUTH_TOKEN = Bun.env.CLAUDEX_PROXY_KEY ?? "claudex-local";
+    delete environment.CLAUDE_CODE_OAUTH_TOKEN;
+    // CC and the scaffolds reference Claude models by tier (utility calls on haiku,
+    // scaffold-pinned sonnet, etc.); the proxy only routes GPT ids (502 "unknown
+    // provider for claude-*"). Mirror the claudex wrapper's full tier mapping.
+    environment.ANTHROPIC_DEFAULT_HAIKU_MODEL = "gpt-5.6-luna";
+    environment.ANTHROPIC_DEFAULT_SONNET_MODEL = "gpt-5.6-terra";
+    environment.ANTHROPIC_DEFAULT_OPUS_MODEL = "gpt-5.6-sol";
+    environment.ANTHROPIC_DEFAULT_FABLE_MODEL = "gpt-5.6-sol";
+    environment.CLAUDE_CODE_SUBAGENT_MODEL = "inherit";
+    environment.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+  } else {
+    // Long-lived subscription token from `claude setup-token` (see README): rotation-free,
+    // so parallel sandboxes never clobber each other's refresh chains — or the live one.
+    const tokenFile = path("sandboxes", "_auth", "oauth-token");
+    const oauthToken = (await Bun.file(tokenFile).text().catch(() => "")).trim();
+    if (!oauthToken) throw new Error(`missing ${tokenFile} — run setup-token capture before benchmarking`);
+    environment.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+  }
 
   let stdout = "";
   let stderr = "";
