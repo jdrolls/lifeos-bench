@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { chmod } from "node:fs/promises";
 import { ensure, exists, path } from "./Common.ts";
 
 /**
@@ -67,16 +68,24 @@ const SESSION_SHIM = /cmux-cli-shims|\/T\/[^/]*-shims?\//;
 export function sanitizeEnvironment(
   environment: Record<string, string | undefined>,
   home: string = realHome,
+  cliDirectory?: string,
 ): Record<string, string | undefined> {
   const operatorConfig = join(home, ".claude");
   const sanitized: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(environment)) {
     if (value === undefined) continue;
     if (key === "PATH") {
-      sanitized[key] = value
+      const segments = value
         .split(":")
-        .filter((segment) => segment && !segment.startsWith(operatorConfig) && !SESSION_SHIM.test(segment))
-        .join(":");
+        .filter((segment) => segment && !segment.startsWith(operatorConfig) && !SESSION_SHIM.test(segment));
+      // Scaffolds run their own inference by spawning bare `claude`, so what that name resolves
+      // to decides whether their router works at all. Leaving it to inherited PATH ordering is
+      // how it broke: it first resolved to an ephemeral session shim, and once that was stripped
+      // it resolved to nothing — "Executable not found in $PATH: claude" — which the router
+      // reported as a fail-safe to NATIVE, indistinguishable from the scaffold declining to
+      // route. Pin the same stable binary claudeBinary() picked for the harness itself.
+      if (cliDirectory) segments.unshift(cliDirectory);
+      sanitized[key] = segments.join(":");
       continue;
     }
     // Any other variable pointing into the operator's config tree is dropped outright: the
@@ -85,6 +94,33 @@ export function sanitizeEnvironment(
     sanitized[key] = value;
   }
   return sanitized;
+}
+
+/** Directory holding the sandbox's own `claude`, prepended to PATH for every cell. */
+export function cliShimDirectory(version: string): string {
+  return join(fakeHome(version), "bin");
+}
+
+/**
+ * Give each sandbox a real, first-on-PATH `claude` executable.
+ *
+ * The scaffolds run their own inference by spawning bare `claude`, and that lookup was the single
+ * point of failure for their entire routing layer. Inherited PATH first resolved it to an
+ * ephemeral session shim; with the shim stripped, the router still reported
+ * `Executable not found in $PATH: "claude"` even though `command -v claude` in the very same hook
+ * invocation resolved to the real symlink at ~/.local/bin/claude — a spawn-resolution quirk, not
+ * a PATH ordering problem. Either way the router fail-safed to NATIVE, which is indistinguishable
+ * from a scaffold that chose not to route, and it silently became the benchmark's headline.
+ *
+ * A plain exec wrapper removes the ambiguity: an ordinary file, in a sandbox-owned directory,
+ * that hands off to the exact binary claudeBinary() resolved.
+ */
+async function writeCliShim(home: string): Promise<void> {
+  const directory = join(home, "bin");
+  await ensure(directory);
+  const shim = join(directory, "claude");
+  await Bun.write(shim, `#!/bin/sh\nexec ${JSON.stringify(await claudeBinary())} "$@"\n`);
+  await chmod(shim, 0o755);
 }
 
 /** The real CLI, not a session-scoped wrapper shim. Shims vanish between sessions. */
@@ -110,6 +146,7 @@ export async function prepareFakeHome(version: string): Promise<string> {
   if (!(await exists(root))) {
     throw new Error(`sandbox has not been staged: missing config root ${root}`);
   }
+  await writeCliShim(home);
   // Scaffolds and tools also probe these; give them real, writable, sandbox-local homes
   // rather than letting a miss fall through to the operator's directories.
   for (const directory of [".cache", ".config", ".local/share", "Documents"]) {

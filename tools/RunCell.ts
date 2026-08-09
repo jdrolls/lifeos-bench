@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { arg, changed, copyTree, ensure, exists, gitWorkspaceDiff, json, path, reset, snapshot, writeJson } from "./Common.ts";
 import { gradeTrial } from "./Grade.ts";
 import { leakCheck } from "./LeakCheck.ts";
-import { claudeBinary, configRoot, prepareFakeHome, sanitizeEnvironment, writeSeatbeltProfile } from "./Sandbox.ts";
+import { claudeBinary, cliShimDirectory, configRoot, prepareFakeHome, sanitizeEnvironment, writeSeatbeltProfile } from "./Sandbox.ts";
 
 type ResultEvent = {
   type?: string;
@@ -87,7 +87,12 @@ async function main(): Promise<void> {
   // HOME redirect is the fidelity half of isolation: every scaffold references
   // `~/.claude/...` thousands of times, and those must resolve to the STAGED install.
   const fakeHome = await prepareFakeHome(version);
-  const environment: Record<string, string | undefined> = { ...sanitizeEnvironment(process.env), CLAUDE_CONFIG_DIR: sandbox, HOME: fakeHome };
+  const cliBinary = await claudeBinary();
+  const environment: Record<string, string | undefined> = {
+    ...sanitizeEnvironment(process.env, undefined, cliShimDirectory(version)),
+    CLAUDE_CONFIG_DIR: sandbox,
+    HOME: fakeHome,
+  };
   delete environment.ANTHROPIC_API_KEY;
   delete environment.ANTHROPIC_AUTH_TOKEN;
   delete environment.CLAUDECODE;
