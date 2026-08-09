@@ -1,4 +1,4 @@
-import { appendFile, chmod, cp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { arg, copyTree, ensure, exists, files, path, reset } from "./Common.ts";
@@ -85,12 +85,16 @@ async function stageL7(destination: string): Promise<void> {
   if (!(await exists(template))) throw new Error("upstream install payload is missing CLAUDE.template.md");
   const claudeFile = join(destination, "CLAUDE.md");
   await cp(template, claudeFile);
-  // The template imports the architecture summary, but does not activate the
-  // algorithm itself. Resolve upstream's declared current algorithm rather than
-  // hard-coding a release filename, then make the config-dir entrypoint explicit.
+  // Do NOT @-import the Algorithm here. Phases 1-3 appended `@LIFEOS/ALGORITHM/<version>`,
+  // which never resolved (LATEST holds "8.17.3"; the file is "v8.17.3.md", and Claude Code
+  // does not extension-guess) — so the lane silently ran with no Algorithm at all, and the
+  // model went looking for one outside the sandbox. Upstream never imports it either: the
+  // system prompt instructs an on-demand read, which is now wired via --append-system-prompt-file.
+  // Assert the referenced file exists so a future rename fails loudly instead of silently.
   const algorithmVersion = (await readFile(join(destination, "LIFEOS", "ALGORITHM", "LATEST"), "utf8")).trim();
   if (!/^[A-Za-z0-9._-]+$/.test(algorithmVersion)) throw new Error("upstream algorithm LATEST is invalid");
-  await appendFile(claudeFile, `\n@LIFEOS/ALGORITHM/${algorithmVersion}\n`);
+  const algorithmFile = join(destination, "LIFEOS", "ALGORITHM", `v${algorithmVersion}.md`);
+  if (!(await exists(algorithmFile))) throw new Error(`upstream algorithm file is missing: ${algorithmFile}`);
   await overlaySyntheticUser(destination);
 }
 

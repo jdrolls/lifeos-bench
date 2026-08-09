@@ -3,6 +3,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { arg, changed, copyTree, ensure, exists, gitWorkspaceDiff, json, path, reset, snapshot, writeJson } from "./Common.ts";
 import { gradeTrial } from "./Grade.ts";
+import { leakCheck } from "./LeakCheck.ts";
+import { claudeBinary, prepareFakeHome, writeSeatbeltProfile } from "./Sandbox.ts";
 
 type ResultEvent = {
   type?: string;
@@ -13,7 +15,10 @@ type ResultEvent = {
 
 type BenchConfig = {
   models: Array<{ id: string; cli_arg: string; engine?: "claudex" }>;
-  versions: Array<{ id: string }>;
+  // system_prompt is the version's constitutional file, relative to its sandbox. Upstream
+  // installs load it via --append-system-prompt-file; omitting it (as Phases 1-3 did) runs
+  // the scaffold without the layer that defines its response format and verification rules.
+  versions: Array<{ id: string; system_prompt?: string | null }>;
   runner: { timeout_per_run_s: number };
 };
 type GoldenSet = { prompts: Array<{ id: string; prompt: string; fixture: string | null }> };
@@ -53,12 +58,22 @@ async function main(): Promise<void> {
   const golden = await json<GoldenSet>(path("goldenset", "goldenset.json"));
   const prompt = golden.prompts.find((candidate) => candidate.id === promptId);
   const selectedModel = config.models.find((candidate) => candidate.id === model);
-  if (!prompt || !selectedModel || !config.versions.some((candidate) => candidate.id === version)) {
+  const selectedVersion = config.versions.find((candidate) => candidate.id === version);
+  if (!prompt || !selectedModel || !selectedVersion) {
     throw new Error("unknown version, model, or prompt");
   }
 
   const sandbox = path("sandboxes", version);
   if (!(await exists(sandbox))) throw new Error(`sandbox has not been staged: ${sandbox}`);
+
+  // Fail loud rather than silently benchmarking a scaffold stripped of its constitutional layer.
+  let systemPromptFile: string | undefined;
+  if (selectedVersion.system_prompt) {
+    systemPromptFile = join(sandbox, selectedVersion.system_prompt);
+    if (!(await exists(systemPromptFile))) {
+      throw new Error(`${version} declares system_prompt ${selectedVersion.system_prompt} but it is missing from the sandbox`);
+    }
+  }
   const output = path("results", "phase1", version, model, promptId, `trial-${trial}`);
   const workspace = join(output, "workspace");
   const baselineDirectory = join(output, "baseline");
@@ -69,7 +84,10 @@ async function main(): Promise<void> {
 
   const before = await snapshot(workspace);
   const startedAt = Date.now();
-  const environment: Record<string, string | undefined> = { ...process.env, CLAUDE_CONFIG_DIR: sandbox };
+  // HOME redirect is the fidelity half of isolation: every scaffold references
+  // `~/.claude/...` thousands of times, and those must resolve to the STAGED install.
+  const fakeHome = await prepareFakeHome(version, sandbox);
+  const environment: Record<string, string | undefined> = { ...process.env, CLAUDE_CONFIG_DIR: sandbox, HOME: fakeHome };
   delete environment.ANTHROPIC_API_KEY;
   delete environment.ANTHROPIC_AUTH_TOKEN;
   delete environment.CLAUDECODE;
@@ -102,10 +120,14 @@ async function main(): Promise<void> {
   let exitCode: number | null = null;
   let timedOut = false;
   let launchError: string | undefined;
+  // Recorded into meta.json: a benchmark claim is only reproducible if the exact invocation
+  // is on record. The missing --append-system-prompt-file in Phases 1-3 was invisible partly
+  // because nothing ever wrote down what was actually run.
+  let spawnArgv: string[] = [];
   try {
     // detached:true gives the CLI its own process group (macOS ships no setsid), so the
     // timeout can terminate the whole tree rather than orphaning the CLI's children.
-    const child = spawn("claude", [
+    const claudeArguments = [
       "-p", prompt.prompt,
       "--model", selectedModel.cli_arg,
       "--output-format", "stream-json",
@@ -113,7 +135,14 @@ async function main(): Promise<void> {
       // the same permission mode on every lane so no framework wins on permission prompts.
       "--verbose",
       "--permission-mode", "bypassPermissions",
-    ], { cwd: workspace, env: environment, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      ...(systemPromptFile ? ["--append-system-prompt-file", systemPromptFile] : []),
+    ];
+    // Seatbelt is the safety half: bypassPermissions removes every in-harness check, so the
+    // kernel has to be the thing that says no. Profile is written beside the artifacts so a
+    // contaminated cell can be reproduced exactly.
+    const profileFile = await writeSeatbeltProfile({ fakeHome, sandbox, workspace, trialDirectory: output });
+    spawnArgv = ["/usr/bin/sandbox-exec", "-f", profileFile, await claudeBinary(), ...claudeArguments];
+    const child = spawn(spawnArgv[0], spawnArgv.slice(1), { cwd: workspace, env: environment, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     const timeoutMs = Number(config.runner.timeout_per_run_s) * 1_000;
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("runner timeout_per_run_s must be positive");
     child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
@@ -148,13 +177,22 @@ async function main(): Promise<void> {
   await writeFile(join(output, "workspace-diff.txt"), diff.diff || "No workspace changes\n");
 
   const result = finalResultEvent(transcript);
+  // A cell that reached outside its sandbox is not a data point. Its behaviour was shaped by
+  // material the version under test does not ship, or by a kernel refusal it had to react to.
+  // Mark it invalid here so it can never be graded into a headline.
+  const violations = await leakCheck(output);
   const meta = {
     version,
     model,
     prompt_id: promptId,
     trial,
     fixture: prompt.fixture,
-    status: timedOut ? "timeout" : exitCode === 0 && !diff.error ? "success" : "failed",
+    status: violations.length > 0
+      ? "contaminated"
+      : timedOut ? "timeout" : exitCode === 0 && !diff.error ? "success" : "failed",
+    ...(violations.length > 0
+      ? { containment_violations: violations.slice(0, 20), containment_violation_count: violations.length }
+      : {}),
     exit_code: exitCode,
     wall_clock_ms: Date.now() - startedAt,
     token_usage: result?.usage ?? {},
@@ -162,6 +200,8 @@ async function main(): Promise<void> {
     total_cost_usd: result?.total_cost_usd,
     changed_files: changedFiles,
     baseline: before,
+    command: spawnArgv,
+    system_prompt_file: systemPromptFile ?? null,
     ...(launchError ? { launch_error: launchError } : {}),
     ...(diff.error ? { workspace_diff_error: diff.error } : {}),
   };

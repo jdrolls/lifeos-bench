@@ -5,6 +5,7 @@
       "id": "RAW",
       "kind": "bare",
       "source": null,
+      "system_prompt": null,
       "publish_transcripts": true,
       "routing_markers": {
         "heavy": null,
@@ -16,16 +17,19 @@
       "id": "L7",
       "kind": "upstream",
       "source": "vendor/LifeOS@v7.28.3",
+      "system_prompt": "LIFEOS/LIFEOS_SYSTEM_PROMPT.md",
       "publish_transcripts": true,
       "routing_markers": {
-        "heavy": "ALGORITHM|♻",
-        "light": "MINIMAL|NATIVE"
-      }
+        "heavy": null,
+        "light": null
+      },
+      "note": "v7.28.3 retired modes entirely (LIFEOS_SYSTEM_PROMPT.md: 'One format, every response — there are no modes'). Banner markers are therefore null and the routing grader is skipped; routing is measured behaviourally via code:algorithm_read instead."
     },
     {
       "id": "FORK",
       "kind": "local",
       "source": "~/.claude (staged, scrubbed synthetic user)",
+      "system_prompt": "PAI/PAI_SYSTEM_PROMPT.md",
       "publish_transcripts": false,
       "routing_markers": {
         "heavy": "PAI ALGORITHM|♻",
