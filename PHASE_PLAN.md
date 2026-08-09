@@ -77,11 +77,18 @@ the full model sweep. Three questions, each with the cheapest matrix that answer
 Resume-safe throughout; `Fleet.ts` skips cells whose `meta.json` says `success` and retries
 anything marked `contaminated`.
 
-1. **Wave A — bisect (136 cells):** L5 + L6, both models, all tiers. Answers Q1's hard half
-   and exercises the two least-tested staging paths first.
-2. **Wave B — RAW + L7 core (48 cells):** both models, all tiers. Completes Q1 and Q3.
-3. **Wave C — model sweep (376 cells):** RAW + L7 × the remaining six models. The expensive
-   one; Opus lanes live here. Split across subscription windows.
+A wave is a **(versions × models)** selection, not a version selection: Waves B and C share
+their versions and differ only by model, so `Fleet.ts` takes `--versions` *and* `--models`.
+
+1. **Wave A — bisect (136 cells):** L5 + L6, both bisect models, all tiers. Answers Q1's hard
+   half and exercises the two least-tested staging paths first.
+2. **Wave B — RAW + L7 core (136 cells):** both bisect models, all tiers. Completes Q1 and Q3.
+3. **Wave C — model sweep (288 cells):** RAW + L7 × the remaining six models, T1–T4 only
+   (T5 is restricted to the two bisect models by `tier_models`). The expensive one; Opus lanes
+   live here. Split across subscription windows.
+
+136 + 136 + 288 = 560. (Earlier drafts labelled these 48 and 376, which matched neither the
+prose above nor the enumerated matrix.)
 
 ### Launch
 
@@ -106,6 +113,31 @@ Judges stay blinded and cross-vendor: Claude-family cells judged by GPT, GPT cel
 `scrubResponse` strips banner lines before the judge sees anything; its `BLINDING_MARKERS`
 already covers `═══`, `LifeOS`, `♻`, and the `🗣️` closer, so v5/v6/v7 formats are all
 stripped. Re-check it if any version's banner changes.
+
+### Wave A + B results (run 2026-08-09)
+
+272/272 cells `success`, containment clean, all rubrics judged cross-vendor. Numbers in
+`results/phase1/REPORT.md`. Six harness/grader defects were found and fixed mid-run; the
+per-defect list is in `README.md` → Grader integrity.
+
+**The routing metric did not survive contact with the harness.** L6 and L7 route through an
+LLM-backed classifier hook (`TheRouter.hook.ts`). Verified: the hook *runs* inside cells, and the
+classifier returns a correct `MODE: ALGORITHM | TIER: E3` when invoked standalone — even under the
+seatbelt, in 5s against its own 35s timeout. But inside a cell it never delivers a decision (its
+cache is never written), because the hook subprocess receives no credentials: Claude Code does not
+export `CLAUDE_CODE_OAUTH_TOKEN` to hooks, and `RunCell` scrubs `ANTHROPIC_*` for billing hygiene,
+while upstream's `Inference.ts` deletes them too and spawns a bare `claude`. Ruled out along the
+way: hooks not firing headless (they fire), hook timeout (5s vs 35s), `CLAUDECODE` (upstream clears
+it), in-sandbox credentials, and an ephemeral `cmux` PATH shim.
+
+Consequence: `algorithm_read` for L6/L7 measures **unrouted model behavior**, not routing design.
+Do not report "L6 never enters the Algorithm" as a scaffold regression. L5 is unaffected because
+v5 routes via prose in `CLAUDE.md` — no subprocess, nothing to authenticate. That asymmetry is
+itself the interesting result: prose routing survives an environment where hook-based routing
+cannot run.
+
+**Full isolation is the first Phase 5 task**, ahead of the 5-trial work. Until then L6/L7 routing
+numbers are harness-limited, and any L7 routing collected in Wave C carries the same caveat.
 
 ## Phase 5 — hardening
 
@@ -136,5 +168,9 @@ stripped. Re-check it if any version's banner changes.
 
 - `t5-conflict`'s `helper_produced` check accepts any language by design; the rubric carries
   the actual judgement. Confirm the judge is strict about acknowledgement.
+- **T5 rows judged before 2026-08-09 are void and need re-judging.** The judge prompt never
+  contained the persona, so `grounding_quality` asked it to verify citations against materials it
+  could not see; two cells citing the identical real fact got opposite verdicts. `Judge.ts` now
+  supplies the persona for T5 judgments, but the existing T5 verdicts predate that fix.
 - RAW rows show `—` for routing and format by construction, not by missing data.
 - `results/phase1/` path name is now historical; runs are Phase 4 but land there.

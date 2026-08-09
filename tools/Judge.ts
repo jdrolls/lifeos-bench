@@ -14,7 +14,7 @@ type GradeRow = {
 type Rubric = { inputs: string[]; criteria: string[]; score_anchor: string };
 type RubricsFile = { rubrics: Record<string, Rubric> };
 type Expectation = { grader: string; rubric?: string; min_score?: number; name?: string };
-type Prompt = { id: string; prompt: string; expectations: Expectation[] };
+type Prompt = { id: string; tier?: string; prompt: string; expectations: Expectation[] };
 type GoldenSet = { prompts: Prompt[] };
 type TrialMeta = { final_message?: string };
 
@@ -26,6 +26,8 @@ type PendingJudgment = {
   prompt: string;
   finalMessage: string;
   workspaceDiff?: string;
+  /** Synthetic persona materials, supplied only for tiers whose rubric grades grounding. */
+  persona?: string;
 };
 
 export type JudgeReply = { score: number; reasoning: string; criteria_met: string[] };
@@ -153,6 +155,24 @@ export async function judgeWithRetry(invoke: () => Promise<string>): Promise<Jud
   return { reply: null, error: lastError ?? "judge failed without an error message", attempts: 2 };
 }
 
+/**
+ * The synthetic persona, assembled from the same blocks StagePersona renders into each install.
+ * Cached because every T5 judgment needs the identical text.
+ */
+let personaCache: string | undefined;
+export async function personaMaterials(): Promise<string> {
+  if (personaCache !== undefined) return personaCache;
+  const blocks = ["principal", "telos", "projects", "da", "operational_rules"];
+  const parts: string[] = [];
+  for (const block of blocks) {
+    const file = path("fixtures", "_persona", "blocks", `${block}.md`);
+    if (await exists(file)) parts.push((await readFile(file, "utf8")).trim());
+  }
+  if (parts.length === 0) throw new Error("persona blocks are missing; T5 grounding cannot be judged");
+  personaCache = parts.join("\n\n---\n\n");
+  return personaCache;
+}
+
 function buildPrompt(judgment: PendingJudgment): string {
   const materials = [
     "## User prompt",
@@ -161,6 +181,14 @@ function buildPrompt(judgment: PendingJudgment): string {
     "## Final response (blinded and scrubbed)",
     scrubResponse(judgment.finalMessage),
   ];
+  // Personalization rubrics ask whether the response cites the user's ACTUAL profile. Without
+  // the profile in front of it, the judge cannot tell a correct citation from a fabricated one
+  // and simply guesses — which is what happened: two cells citing the identical (real) fact got
+  // opposite verdicts, one passed as grounded, one failed as "unverifiable assertion". Supplying
+  // the persona is what makes the T5 tier measurable at all.
+  if (judgment.persona !== undefined) {
+    materials.push("", "## The user's profile (ground truth for grounding checks)", judgment.persona);
+  }
   if (judgment.workspaceDiff !== undefined) materials.push("", "## Workspace diff", judgment.workspaceDiff);
   return [
     "You are an independent benchmark judge. Score the response only against this rubric and supplied materials.",
@@ -242,7 +270,7 @@ async function pendingJudgments(limit?: number): Promise<PendingJudgment[]> {
     if (workspaceDiff !== undefined && workspaceDiff.length > DIFF_CAP) {
       workspaceDiff = `${workspaceDiff.slice(0, DIFF_CAP)}\n\n[diff truncated at ${DIFF_CAP} bytes of ${workspaceDiff.length}]`;
     }
-    judgments.push({ source, rubricName: expectation.rubric, rubric, minScore: expectation.min_score, prompt: prompt.prompt, finalMessage: meta.final_message, workspaceDiff });
+    judgments.push({ source, rubricName: expectation.rubric, rubric, minScore: expectation.min_score, prompt: prompt.prompt, finalMessage: meta.final_message, workspaceDiff, persona: prompt.tier === "T5" ? await personaMaterials() : undefined });
   }
   return judgments;
 }
@@ -253,6 +281,22 @@ function parseLimit(): number | undefined {
   const limit = Number(value);
   if (!Number.isInteger(limit) || limit < 0) throw new Error("--limit must be a non-negative integer");
   return limit;
+}
+
+/**
+ * Restrict a judging pass to one model's cells.
+ *
+ * Judges must be cross-vendor: a Claude-family cell is judged by GPT and a GPT-family cell by
+ * Claude, so no vendor grades its own output. JUDGE_CMD is a single template, so honouring that
+ * requires running one pass per vendor with a different command — which needs this filter.
+ * Without it the only options were "one judge for everything" (same-vendor for half the matrix)
+ * or nothing.
+ */
+export function selectByModel<T extends { source: { model: string } }>(judgments: T[], model: string | undefined): T[] {
+  if (model === undefined) return judgments;
+  const wanted = new Set(model.split(",").map((entry) => entry.trim()).filter(Boolean));
+  if (wanted.size === 0) throw new Error("--model requires at least one model id");
+  return judgments.filter((judgment) => wanted.has(judgment.source.model));
 }
 
 async function appendResult(judgment: PendingJudgment, result: JudgeResult): Promise<void> {
@@ -275,7 +319,7 @@ async function appendResult(judgment: PendingJudgment, result: JudgeResult): Pro
 
 async function main(): Promise<void> {
   const dryRun = Bun.argv.includes("--dry-run");
-  const judgments = await pendingJudgments(parseLimit());
+  const judgments = selectByModel(await pendingJudgments(parseLimit()), arg("--model"));
   if (dryRun) {
     console.log(`Pending judge rows: ${judgments.length}`);
     if (judgments[0]) console.log(buildPrompt(judgments[0]));

@@ -1,6 +1,5 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { rm, symlink } from "node:fs/promises";
 import { ensure, exists, path } from "./Common.ts";
 
 /**
@@ -11,11 +10,14 @@ import { ensure, exists, path } from "./Common.ts";
  * references inside every scaffold resolved to the operator's live install. Cells read it,
  * and the contents landed in published transcripts.
  *
- * Two mechanisms, in this order, because they solve different problems:
+ * Three mechanisms, in this order, because they solve different problems:
  *
  *   1. HOME redirect  — FIDELITY. `~/.claude/...` must resolve to the STAGED scaffold, so
  *      the version under test behaves the way it does on a real machine.
- *   2. Seatbelt       — SAFETY. Anything that still reaches for the real home is refused by
+ *   2. Physical nesting — FIDELITY. Upstream tools import across the config root with paths
+ *      such as `../../../.claude/hooks/...`; the config root must therefore physically be
+ *      `<fakeHome>/.claude`, not a sibling reached only through HOME or a symlink.
+ *   3. Seatbelt       — SAFETY. Anything that still reaches for the real home is refused by
  *      the kernel rather than by good manners.
  *
  * A denied read is NOT a graded outcome: it perturbs behavior (the model errors, retries,
@@ -23,6 +25,67 @@ import { ensure, exists, path } from "./Common.ts";
  */
 
 export const realHome = homedir();
+
+/** Version-local HOME used to run a staged config without touching the operator's home. */
+export function fakeHome(version: string): string {
+  return path("sandboxes", "_home", version);
+}
+
+/**
+ * The staged Claude config root. It is physically nested under fakeHome because upstream
+ * relative imports explicitly traverse through `.claude`, bypassing HOME resolution.
+ */
+export function configRoot(version: string): string {
+  return join(fakeHome(version), ".claude");
+}
+
+/**
+ * Strip the operator's own config path out of the child environment.
+ *
+ * The runner inherits `process.env`, whose PATH carries entries like
+ * `<realHome>/.claude/plugins/cache/.../bin`. That is contamination twice over: those bins are
+ * on the sandboxed scaffold's PATH, and any cell that dumps its environment writes the literal
+ * operator config path into its transcript — which LeakCheck then flags as an escape. A cell
+ * that merely ran `printenv` got marked `contaminated` and, by design, would have withheld the
+ * whole fleet's report. Remove it at the source so the marker cannot appear without a real read.
+ *
+ * The toolchain paths the CLI genuinely needs (`.bun/bin`, `.local/bin`) are deliberately kept —
+ * the seatbelt allows those read-only, and dropping them would break the run.
+ */
+/**
+ * Ephemeral terminal-session shims that must never be what a scaffold resolves `claude` to.
+ *
+ * claudeBinary() already refuses these for the harness's own invocation ("shims vanish between
+ * sessions"), but the scaffolds run their OWN inference by spawning bare `claude` from PATH.
+ * A shim there is not a cosmetic difference: v6/v7 route every prompt through an LLM classifier
+ * hook, that hook's `claude` call resolved to the shim and failed, the router fail-safed to
+ * NATIVE, and the model consequently never entered the Algorithm. It looked exactly like the
+ * scaffold choosing not to route — a harness artifact masquerading as the headline finding.
+ */
+const SESSION_SHIM = /cmux-cli-shims|\/T\/[^/]*-shims?\//;
+
+export function sanitizeEnvironment(
+  environment: Record<string, string | undefined>,
+  home: string = realHome,
+): Record<string, string | undefined> {
+  const operatorConfig = join(home, ".claude");
+  const sanitized: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(environment)) {
+    if (value === undefined) continue;
+    if (key === "PATH") {
+      sanitized[key] = value
+        .split(":")
+        .filter((segment) => segment && !segment.startsWith(operatorConfig) && !SESSION_SHIM.test(segment))
+        .join(":");
+      continue;
+    }
+    // Any other variable pointing into the operator's config tree is dropped outright: the
+    // sandboxed child has its own HOME and CLAUDE_CONFIG_DIR and never needs the real one.
+    if (value.includes(operatorConfig)) continue;
+    sanitized[key] = value;
+  }
+  return sanitized;
+}
 
 /** The real CLI, not a session-scoped wrapper shim. Shims vanish between sessions. */
 export async function claudeBinary(): Promise<string> {
@@ -38,15 +101,15 @@ export async function claudeBinary(): Promise<string> {
 }
 
 /**
- * Build the per-version fake home. `<fakeHome>/.claude` points at the staged sandbox so a
- * scaffold's `~/.claude/LIFEOS/...` reference lands inside its own install.
+ * Ensure only the fake home's auxiliary directories. The nested config root is staged
+ * separately and must never be created, replaced, or recursively removed here.
  */
-export async function prepareFakeHome(version: string, sandbox: string): Promise<string> {
-  const home = path("sandboxes", "_home", version);
-  await ensure(home);
-  const link = join(home, ".claude");
-  await rm(link, { recursive: true, force: true });
-  await symlink(sandbox, link);
+export async function prepareFakeHome(version: string): Promise<string> {
+  const home = fakeHome(version);
+  const root = configRoot(version);
+  if (!(await exists(root))) {
+    throw new Error(`sandbox has not been staged: missing config root ${root}`);
+  }
   // Scaffolds and tools also probe these; give them real, writable, sandbox-local homes
   // rather than letting a miss fall through to the operator's directories.
   for (const directory of [".cache", ".config", ".local/share", "Documents"]) {
@@ -57,7 +120,7 @@ export async function prepareFakeHome(version: string, sandbox: string): Promise
 
 export type SandboxPaths = {
   fakeHome: string;
-  sandbox: string;
+  configRoot: string;
   workspace: string;
   trialDirectory: string;
 };
@@ -74,7 +137,7 @@ export function seatbeltProfile(paths: SandboxPaths): string {
     join(realHome, ".local", "bin"),
     join(realHome, ".local", "state", "claude"),
   ];
-  const readWrite = [paths.fakeHome, paths.sandbox, paths.workspace, paths.trialDirectory];
+  const readWrite = [paths.fakeHome, paths.configRoot, paths.workspace, paths.trialDirectory];
   const quote = (value: string) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
   return [
     "(version 1)",

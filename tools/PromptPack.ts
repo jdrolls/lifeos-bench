@@ -1,5 +1,6 @@
 import { dirname, join, relative } from "node:path";
 import { arg, ensure, exists, text } from "./Common.ts";
+import { configRoot } from "./Sandbox.ts";
 
 const IMPORT_LINE = /^\s*@([^\s]+)\s*$/gm;
 
@@ -63,7 +64,7 @@ export async function renderPromptPack(sandbox: string): Promise<string> {
 }
 
 export async function writePromptPack(version: string): Promise<string> {
-  const sandbox = join(import.meta.dir, "..", "sandboxes", version);
+  const sandbox = configRoot(version);
   if (!(await exists(sandbox))) throw new Error(`sandbox has not been staged: ${sandbox}`);
   const output = join(sandbox, "promptpack.md");
   await ensure(sandbox);

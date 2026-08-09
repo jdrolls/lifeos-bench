@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { enumerate } from "../tools/Fleet.ts";
+import { enumerate, selectCells } from "../tools/Fleet.ts";
 import { json, path } from "../tools/Common.ts";
 
 /**
@@ -54,4 +54,67 @@ test("every enumerated version and model is declared in config", async () => {
   ]);
   expect(cells.every((cell) => versions.has(cell.version))).toBe(true);
   expect(cells.every((cell) => models.has(cell.model))).toBe(true);
+});
+
+test("Fleet --versions selects only requested versions", async () => {
+  const config = await json<any>(path("bench.config.json"));
+  const golden = await json<any>(path("goldenset", "goldenset.json"));
+  const cells = enumerate(config, golden);
+
+  const selected = selectCells(cells, config.versions.map((version: any) => version.id), "L5,L6", undefined);
+
+  expect(selected).toEqual(cells.filter((cell) => cell.version === "L5" || cell.version === "L6"));
+  expect(selected).toHaveLength(136);
+});
+
+test("Fleet --versions filters before applying --limit", async () => {
+  const config = await json<any>(path("bench.config.json"));
+  const golden = await json<any>(path("goldenset", "goldenset.json"));
+  const cells = enumerate(config, golden);
+
+  const selected = selectCells(cells, config.versions.map((version: any) => version.id), "L5,L6", 5);
+  const versionSelected = cells.filter((cell) => cell.version === "L5" || cell.version === "L6");
+
+  expect(selected).toEqual(versionSelected.slice(0, 5));
+});
+
+test("Fleet --versions rejects unknown version ids", async () => {
+  const config = await json<any>(path("bench.config.json"));
+  const golden = await json<any>(path("goldenset", "goldenset.json"));
+  const cells = enumerate(config, golden);
+
+  expect(() => selectCells(cells, config.versions.map((version: any) => version.id), "L5,unknown", undefined))
+    .toThrow("unknown version id(s): unknown; valid ids: RAW, L5, L6, L7");
+});
+
+test("Fleet full enumeration remains at expected_runs", async () => {
+  const config = await json<any>(path("bench.config.json"));
+  const golden = await json<any>(path("goldenset", "goldenset.json"));
+
+  expect(enumerate(config, golden)).toHaveLength(config.expected_runs);
+});
+
+test("Fleet --models narrows a wave that shares versions with another wave", async () => {
+  // Wave B (RAW+L7 on the two bisect models) and Wave C (RAW+L7 on the other six) share
+  // versions, so version filtering alone cannot separate them.
+  const config = await json<any>(path("bench.config.json"));
+  const golden = await json<any>(path("goldenset", "goldenset.json"));
+  const cells = enumerate(config, golden);
+  const versionIds = config.versions.map((version: any) => version.id);
+  const modelIds = config.models.map((model: any) => model.id);
+
+  const waveB = selectCells(cells, versionIds, "RAW,L7", undefined, modelIds, "sonnet-5,gpt-5.6-terra");
+
+  expect(waveB).toHaveLength(136);
+  expect(waveB.every((cell) => ["RAW", "L7"].includes(cell.version))).toBe(true);
+  expect(waveB.every((cell) => ["sonnet-5", "gpt-5.6-terra"].includes(cell.model))).toBe(true);
+});
+
+test("Fleet --models rejects an unknown model id", async () => {
+  const config = await json<any>(path("bench.config.json"));
+  const golden = await json<any>(path("goldenset", "goldenset.json"));
+  const cells = enumerate(config, golden);
+
+  expect(() => selectCells(cells, config.versions.map((v: any) => v.id), undefined, undefined,
+    config.models.map((m: any) => m.id), "sonnet-5,nope")).toThrow("unknown model id(s): nope");
 });

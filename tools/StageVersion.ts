@@ -1,8 +1,8 @@
-import { chmod, cp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { cp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { arg, copyTree, ensure, exists, files, path, reset } from "./Common.ts";
 import { stagePersona } from "./StagePersona.ts";
+import { configRoot } from "./Sandbox.ts";
 
 // Keep the static harness free of private-profile literals while checking the exact
 // prohibited values after concatenation in the staged tree.
@@ -58,23 +58,6 @@ const UPSTREAM_PAYLOADS: Record<string, { payload: string[]; user: string[]; tem
     systemPromptDir: "LIFEOS",
   },
 };
-const sharedAuthDirectory = path("sandboxes", "_auth");
-
-/** Prefer the most recently refreshed credentials file so the shared chain starts valid. */
-async function newestCredentialsSeed(): Promise<string | undefined> {
-  const candidates = [
-    join(homedir(), ".claude", ".credentials.json"),
-    ...["RAW", "L7", "FORK"].map((version) => path("sandboxes", version, ".credentials.json")),
-  ];
-  let newest: { file: string; mtimeMs: number } | undefined;
-  for (const candidate of candidates) {
-    const info = await stat(candidate).catch(() => undefined);
-    if (!info?.isFile()) continue;
-    if (!newest || info.mtimeMs > newest.mtimeMs) newest = { file: candidate, mtimeMs: info.mtimeMs };
-  }
-  return newest?.file;
-}
-
 async function syntheticUserSource(): Promise<string> {
   const fixtureRoot = path("fixtures", "_synthetic-user");
   const nestedUser = join(fixtureRoot, "USER");
@@ -149,6 +132,43 @@ async function activateIdentityImports(destination: string, payload: string): Pr
   return activated.activated;
 }
 
+/** Run the upstream hook installer and fail if it leaves the staged config unenforced. */
+async function installUpstreamHooks(destination: string, payload: string): Promise<void> {
+  const skillRoot = join(payload, "..");
+  const tool = join(skillRoot, "Tools", "InstallHooks.ts");
+  if (!(await exists(tool))) throw new Error(`upstream InstallHooks tool is missing: ${tool}`);
+  const proc = Bun.spawn([
+    "bun", tool,
+    "--config-root", destination,
+    "--skill-root", skillRoot,
+    "--apply",
+    "--allow-dev",
+  ], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (exitCode !== 0) throw new Error(`InstallHooks failed (${exitCode}): ${stderr.trim() || stdout.trim()}`);
+
+  const settingsFile = join(destination, "settings.json");
+  let settings: unknown;
+  try {
+    settings = JSON.parse(await readFile(settingsFile, "utf8"));
+  } catch (error) {
+    throw new Error(`InstallHooks produced invalid settings.json: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const hooks = settings && typeof settings === "object" && !Array.isArray(settings)
+    ? (settings as Record<string, unknown>).hooks
+    : undefined;
+  if (!hooks || typeof hooks !== "object" || Array.isArray(hooks) || Object.keys(hooks).length === 0) {
+    throw new Error("InstallHooks registered no hooks in settings.json");
+  }
+}
+
 /**
  * Stage an upstream LifeOS release into a Claude config directory.
  *
@@ -167,6 +187,12 @@ async function stageUpstream(version: string, destination: string): Promise<void
   await copyTree(payload, destination);
 
   if (spec.template) {
+    // Claude Code reads only settings.json; upstream generates it from settings.system.json,
+    // and skipping that setup step ran this scaffold with no enforcement layer.
+    const systemSettings = join(destination, "settings.system.json");
+    if (!(await exists(systemSettings))) throw new Error(`${version} payload is missing settings.system.json`);
+    await cp(systemSettings, join(destination, "settings.json"));
+
     const template = join(destination, spec.template);
     if (!(await exists(template))) throw new Error(`${version} payload is missing ${spec.template}`);
     await cp(template, join(destination, "CLAUDE.md"));
@@ -188,6 +214,7 @@ async function stageUpstream(version: string, destination: string): Promise<void
   // v5 ships its identity imports already active; v6/v7 need their own setup step.
   if (spec.template) await activateIdentityImports(destination, payload);
   await substitutePersonaTokens(destination);
+  if (spec.template) await installUpstreamHooks(destination, payload);
   await assertScrubbed(destination);
 }
 
@@ -249,7 +276,7 @@ async function main(): Promise<void> {
     throw new Error("usage: bun tools/StageVersion.ts RAW|L7|FORK [--force] [--fork-src DIR]");
   }
 
-  const destination = path("sandboxes", version);
+  const destination = configRoot(version);
   const force = Bun.argv.includes("--force");
   if (await exists(destination) && !force) {
     if (version === "FORK") await assertScrubbed(destination);
@@ -284,20 +311,15 @@ async function main(): Promise<void> {
       delete parsed.fallbackModel;
       await writeFile(settingsFile, `${JSON.stringify(parsed, null, 2)}\n`);
     }
-    // …2) auth: credentials are account-identifying. Sandboxes are gitignored.
-    // ALL sandboxes symlink ONE shared credentials file: per-sandbox copies fork the OAuth
-    // refresh chain — the first run to refresh rotates the token and orphans every other copy.
-    await ensure(sharedAuthDirectory);
-    const shared = join(sharedAuthDirectory, ".credentials.json");
-    if (!(await exists(shared))) {
-      const seed = await newestCredentialsSeed();
-      if (!seed) throw new Error("no .credentials.json found to seed sandbox auth");
-      await cp(seed, shared);
-      await chmod(shared, 0o600);
-    }
-    const link = join(destination, ".credentials.json");
-    await rm(link, { force: true });
-    await symlink(shared, link);
+    // …2) auth: NOTHING credential-bearing is placed in the sandbox.
+    // Cells run under --permission-mode bypassPermissions, so anything reachable inside the
+    // config dir is readable by the model under test and can land verbatim in a published
+    // transcript. Claude lanes authenticate purely from CLAUDE_CODE_OAUTH_TOKEN (set by
+    // RunCell from sandboxes/_auth/oauth-token, which stays OUTSIDE every sandbox); claudex
+    // lanes use the local proxy key. Verified: a cell authenticates with no credentials file
+    // present at all. The previous shared-symlink scheme put real OAuth access/refresh
+    // material one `cat ~/.claude/.credentials.json` away from the transcript, and a plain
+    // `ls -la ~/.claude` was already enough to mark a clean cell "contaminated".
     await writeFile(join(destination, ".claude.json"), `${JSON.stringify({ hasCompletedOnboarding: true }, null, 2)}\n`);
   } catch (error) {
     await rm(destination, { recursive: true, force: true });

@@ -53,6 +53,23 @@ function matches(value: string, pattern: unknown): boolean {
   return compile(pattern).test(value);
 }
 
+/**
+ * Scaffold runtime state written into the graded workspace is not the model's work product.
+ *
+ * A cell runs with cwd = its workspace, so a scaffold's hooks create a project-local `.claude/`
+ * and write bookkeeping there (drift reminders, ISA nudges, skill indexes). Counting those as
+ * "changed files" is not a small inaccuracy: the diff-count thresholds are 0, 1 and 2, so a
+ * single stray file flips a verdict. It failed L7 on `plan_means_stop` for a plan-only prompt it
+ * had obeyed perfectly — every "changed file" was hook state.
+ *
+ * The bias is one-directional and therefore worse than noise: only versions that HAVE hooks can
+ * be penalised, never the bare control, so the metric silently rewards the absence of scaffolding
+ * — the exact thing this benchmark exists to measure.
+ */
+export function isScaffoldState(file: unknown): boolean {
+  return typeof file === "string" && /(^|\/)\.claude\//.test(file);
+}
+
 function numeric(value: unknown, field: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${field} must be a finite number`);
   return value;
@@ -232,7 +249,8 @@ export async function gradeExpectation(expectation: Expectation, context: GradeC
     if (type === "code:workspace_diff_count") {
       if (!Array.isArray(context.meta.changed_files)) return fail("changed-files metadata is unavailable");
       const maximum = numeric(expectation.max_changed_files, "max_changed_files");
-      const count = context.meta.changed_files.length;
+      const changed = (context.meta.changed_files as unknown[]).filter((file) => !isScaffoldState(file));
+      const count = changed.length;
       return count <= maximum ? pass(`${count} changed files`) : fail(`${count} changed files exceeds ${maximum}`);
     }
 

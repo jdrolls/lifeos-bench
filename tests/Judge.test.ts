@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractLastJudgeReply, judgeWithRetry, scrubResponse } from "../tools/Judge.ts";
+import { extractLastJudgeReply, judgeWithRetry, personaMaterials, scrubResponse, selectByModel } from "../tools/Judge.ts";
 
 const reply = (score: number) => JSON.stringify({ score, reasoning: "specific rationale", criteria_met: ["criterion"] });
 
@@ -63,4 +63,40 @@ test("extractJudgeReply survives unbalanced braces in transcript", () => {
 test("extractJudgeReply falls back to depth scan for wrapped JSON", () => {
   const transcript = 'noise {"score":3,\n"reasoning":"multi-line",\n"criteria_met":[]} trailing';
   expect(extractJudgeReply(transcript)?.score).toBe(3);
+});
+
+/**
+ * Cross-vendor blinding requires one judging pass per vendor, since JUDGE_CMD is a single
+ * template. Without a model filter, half the matrix would be graded by its own vendor.
+ */
+test("selectByModel narrows a judging pass to one vendor's cells", () => {
+  const judgments = [
+    { source: { model: "sonnet-5" } },
+    { source: { model: "gpt-5.6-terra" } },
+    { source: { model: "sonnet-5" } },
+  ];
+
+  expect(selectByModel(judgments, "sonnet-5")).toHaveLength(2);
+  expect(selectByModel(judgments, "gpt-5.6-terra")).toHaveLength(1);
+  expect(selectByModel(judgments, undefined)).toHaveLength(3);
+  expect(selectByModel(judgments, "sonnet-5,gpt-5.6-terra")).toHaveLength(3);
+});
+
+test("selectByModel rejects an empty model list rather than silently judging nothing", () => {
+  expect(() => selectByModel([{ source: { model: "sonnet-5" } }], " ")).toThrow("at least one model id");
+});
+
+/**
+ * Regression: `grounding_quality` asks whether a response cites the user's ACTUAL profile, but
+ * the judge prompt never contained the profile. The judge could only guess, and two cells citing
+ * the identical real fact received opposite verdicts. T5 is unmeasurable without this.
+ */
+test("persona materials load and carry the synthetic profile's distinctive facts", async () => {
+  const persona = await personaMaterials();
+
+  expect(persona.length).toBeGreaterThan(1000);
+  // Distinctive persona anchors the T5 rubrics grade against.
+  expect(persona).toMatch(/Batcomputer|Wayne|Alfred|Gotham/i);
+  // And never the operator's real identity.
+  expect(persona).not.toMatch(/Ralph Trades|Polytrader/i);
 });

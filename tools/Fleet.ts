@@ -28,6 +28,40 @@ function parseLimit(raw: string | undefined): number | undefined {
   return Number(raw);
 }
 
+function parseIds(raw: string | undefined, validIds: readonly string[], label: string): Set<string> | undefined {
+  if (raw === undefined) return undefined;
+  const requested = raw.split(",").map((entry) => entry.trim());
+  const valid = new Set(validIds);
+  const unknown = requested.filter((entry) => !valid.has(entry));
+  if (unknown.length > 0) {
+    const labels = unknown.map((entry) => entry || "(empty)");
+    throw new Error(`unknown ${label} id(s): ${labels.join(", ")}; valid ids: ${validIds.join(", ")}`);
+  }
+  return new Set(requested);
+}
+
+/**
+ * Narrow a verified full matrix to one wave before applying the optional cell limit.
+ *
+ * Version alone is not enough to express a wave. Wave B is "RAW + L7 on the two bisect models",
+ * which shares its versions with Wave C ("RAW + L7 on the other six") — filtering by version
+ * only would run 424 cells instead of 136 and start the expensive Opus lanes early.
+ */
+export function selectCells(
+  cells: Cell[],
+  validVersionIds: readonly string[],
+  versions: string | undefined,
+  limit: number | undefined,
+  validModelIds: readonly string[] = [],
+  models: string | undefined = undefined,
+): Cell[] {
+  const wantedVersions = parseIds(versions, validVersionIds, "version");
+  const wantedModels = parseIds(models, validModelIds, "model");
+  let selected = wantedVersions ? cells.filter((cell) => wantedVersions.has(cell.version)) : cells;
+  if (wantedModels) selected = selected.filter((cell) => wantedModels.has(cell.model));
+  return limit === undefined ? selected : selected.slice(0, limit);
+}
+
 function promptTrials(config: BenchConfig, tier: string): number {
   const trials = config.trials[tier];
   if (!Number.isInteger(trials) || trials < 1) throw new Error(`invalid trial count for tier ${tier}`);
@@ -129,7 +163,15 @@ async function main(): Promise<void> {
   const golden = await json<GoldenSet>(path("goldenset", "goldenset.json"));
   const limit = parseLimit(arg("--limit"));
   const allCells = enumerate(config, golden);
-  const selected = limit === undefined ? allCells : allCells.slice(0, limit);
+  // enumerate() validates the complete configured matrix before a targeted run narrows it.
+  const selected = selectCells(
+    allCells,
+    config.versions.map(({ id }) => id),
+    arg("--versions"),
+    limit,
+    config.models.map(({ id }) => id),
+    arg("--models"),
+  );
 
   if (Bun.argv.includes("--dry-run")) {
     // Deliberately no summary/header: each output line is one cell, so wc equals the run count.

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gradeExpectation, type GradeContext, assistantText } from "../tools/Grade.ts";
+import { gradeExpectation, type GradeContext, assistantText, isScaffoldState } from "../tools/Grade.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -142,4 +142,25 @@ test("routing markers are matched against assistant speech, not files the model 
 
   const emitted = JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "♻︎ Entering the PAI ALGORITHM… (v6.3.0)" }] } });
   expect(assistantText(emitted)).toContain("ALGORITHM");
+});
+
+describe("scaffold state is not the model's work product", () => {
+  /**
+   * Regression: L7 obeyed a plan-only prompt but was failed on `plan_means_stop`, because its
+   * hooks wrote drift/ISA/skill-index JSON into a workspace-local `.claude/`. Only scaffolded
+   * versions can be penalised this way, so the metric silently favoured the bare control.
+   */
+  test("isScaffoldState identifies workspace-local scaffold bookkeeping", () => {
+    expect(isScaffoldState(".claude/LIFEOS/MEMORY/STATE/drift-reminder.json")).toBe(true);
+    expect(isScaffoldState(".claude/LIFEOS/MEMORY/STATE/isa-nudge/abc.json")).toBe(true);
+    expect(isScaffoldState("nested/.claude/PAI/MEMORY/STATE/x.json")).toBe(true);
+  });
+
+  test("isScaffoldState leaves real work product alone", () => {
+    expect(isScaffoldState("src/index.ts")).toBe(false);
+    expect(isScaffoldState("notes/todo.md")).toBe(false);
+    // A file merely mentioning the name is not scaffold state.
+    expect(isScaffoldState("docs/claude-notes.md")).toBe(false);
+    expect(isScaffoldState(42)).toBe(false);
+  });
 });

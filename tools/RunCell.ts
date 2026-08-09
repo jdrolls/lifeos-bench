@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { arg, changed, copyTree, ensure, exists, gitWorkspaceDiff, json, path, reset, snapshot, writeJson } from "./Common.ts";
 import { gradeTrial } from "./Grade.ts";
 import { leakCheck } from "./LeakCheck.ts";
-import { claudeBinary, prepareFakeHome, writeSeatbeltProfile } from "./Sandbox.ts";
+import { claudeBinary, configRoot, prepareFakeHome, sanitizeEnvironment, writeSeatbeltProfile } from "./Sandbox.ts";
 
 type ResultEvent = {
   type?: string;
@@ -63,7 +63,7 @@ async function main(): Promise<void> {
     throw new Error("unknown version, model, or prompt");
   }
 
-  const sandbox = path("sandboxes", version);
+  const sandbox = configRoot(version);
   if (!(await exists(sandbox))) throw new Error(`sandbox has not been staged: ${sandbox}`);
 
   // Fail loud rather than silently benchmarking a scaffold stripped of its constitutional layer.
@@ -86,8 +86,8 @@ async function main(): Promise<void> {
   const startedAt = Date.now();
   // HOME redirect is the fidelity half of isolation: every scaffold references
   // `~/.claude/...` thousands of times, and those must resolve to the STAGED install.
-  const fakeHome = await prepareFakeHome(version, sandbox);
-  const environment: Record<string, string | undefined> = { ...process.env, CLAUDE_CONFIG_DIR: sandbox, HOME: fakeHome };
+  const fakeHome = await prepareFakeHome(version);
+  const environment: Record<string, string | undefined> = { ...sanitizeEnvironment(process.env), CLAUDE_CONFIG_DIR: sandbox, HOME: fakeHome };
   delete environment.ANTHROPIC_API_KEY;
   delete environment.ANTHROPIC_AUTH_TOKEN;
   delete environment.CLAUDECODE;
@@ -140,7 +140,7 @@ async function main(): Promise<void> {
     // Seatbelt is the safety half: bypassPermissions removes every in-harness check, so the
     // kernel has to be the thing that says no. Profile is written beside the artifacts so a
     // contaminated cell can be reproduced exactly.
-    const profileFile = await writeSeatbeltProfile({ fakeHome, sandbox, workspace, trialDirectory: output });
+    const profileFile = await writeSeatbeltProfile({ fakeHome, configRoot: sandbox, workspace, trialDirectory: output });
     spawnArgv = ["/usr/bin/sandbox-exec", "-f", profileFile, await claudeBinary(), ...claudeArguments];
     const child = spawn(spawnArgv[0], spawnArgv.slice(1), { cwd: workspace, env: environment, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     const timeoutMs = Number(config.runner.timeout_per_run_s) * 1_000;

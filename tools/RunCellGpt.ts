@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { arg, changed, copyTree, ensure, exists, gitWorkspaceDiff, json, path, reset, snapshot, writeJson } from "./Common.ts";
 import { gradeTrial } from "./Grade.ts";
 import { writePromptPack } from "./PromptPack.ts";
+import { configRoot, sanitizeEnvironment } from "./Sandbox.ts";
 
 type BenchConfig = {
   versions: Array<{ id: string }>;
@@ -86,7 +87,7 @@ async function main(): Promise<void> {
     throw new Error("unknown GPT version, model, or prompt");
   }
 
-  const sandbox = path("sandboxes", version);
+  const sandbox = configRoot(version);
   if (!(await exists(sandbox))) throw new Error(`sandbox has not been staged: ${sandbox}`);
   const laneVersion = `${version}-GPT`;
   const output = path("results", "phase1", laneVersion, model, promptId, `trial-${trial}`);
@@ -107,7 +108,7 @@ async function main(): Promise<void> {
   const template = process.env.CODEX_RUN_CMD;
   if (!template) throw new Error("CODEX_RUN_CMD is required to run GPT cells");
   const command = renderCodexCommand(template, promptFile, workspace);
-  const environment: Record<string, string | undefined> = { ...process.env };
+  const environment: Record<string, string | undefined> = { ...sanitizeEnvironment(process.env) };
   delete environment.ANTHROPIC_API_KEY;
   delete environment.ANTHROPIC_AUTH_TOKEN;
   delete environment.CLAUDECODE;

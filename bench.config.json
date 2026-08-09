@@ -143,9 +143,10 @@
   "runner": {
     "detached": true,
     "billing": "subscription-oauth (scrub ANTHROPIC_API_KEY + ANTHROPIC_AUTH_TOKEN; never --bare)",
-    "concurrency": 1,
+    "concurrency": 4,
     "timeout_per_run_s": 1200,
-    "isolation": "HOME redirected to sandboxes/_home/<VERSION> (fidelity) + sandbox-exec seatbelt denying the operator home (safety) + LeakCheck marking escapes contaminated (validity)"
+    "isolation": "HOME redirected to sandboxes/_home/<VERSION> (fidelity) + sandbox-exec seatbelt denying the operator home (safety) + LeakCheck marking escapes contaminated (validity)",
+    "concurrency_note": "Cells are independent (per-cell workspace, seatbelt profile and results dir; the staged config root is not written at runtime), so >1 is safe for correctness. It is NOT neutral for latency: concurrent cells contend for CPU, so mean wall-clock is inflated and not comparable to a serial run. Token counts, routing, format compliance and task pass-rates are unaffected. Treat wall-clock as indicative only for any run with concurrency > 1."
   },
   "claudex": {
     "note": "GPT through the SAME CC harness via claudex (ChatGPT-auth wrapper) so hooks fire identically \u2014 this isolates prompts-vs-plumbing.",

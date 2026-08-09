@@ -25,9 +25,19 @@ if [ -n "${CODEX_RUN_CMD:-}" ]; then
   export CODEX_RUN_CMD
 fi
 
-PLANNED=$(bun tools/Fleet.ts --dry-run | wc -l | tr -d ' ')
+FLEET_ARGS=()
+if [ -n "${FLEET_VERSIONS:-}" ]; then
+  FLEET_ARGS=(--versions "$FLEET_VERSIONS")
+fi
+# A wave is (versions x models): Wave B and Wave C share versions and differ only by model.
+if [ -n "${FLEET_MODELS:-}" ]; then
+  FLEET_ARGS=(${FLEET_ARGS[@]+"${FLEET_ARGS[@]}"} --models "$FLEET_MODELS")
+fi
+# macOS ships bash 3.2, where expanding an EMPTY array under `set -u` is an "unbound variable"
+# error. The ${A[@]+"${A[@]}"} form expands to nothing when unset instead of aborting the run.
+PLANNED=$(bun tools/Fleet.ts --dry-run ${FLEET_ARGS[@]+"${FLEET_ARGS[@]}"} | wc -l | tr -d ' ')
 echo "$(date '+%F %T') fleet starting ($PLANNED planned cells, concurrency from config)" >> "$LOG"
-bun tools/Fleet.ts >> "$LOG" 2>&1
+bun tools/Fleet.ts ${FLEET_ARGS[@]+"${FLEET_ARGS[@]}"} >> "$LOG" 2>&1
 FLEET_EXIT=$?
 echo "$(date '+%F %T') fleet finished exit=$FLEET_EXIT" >> "$LOG"
 
