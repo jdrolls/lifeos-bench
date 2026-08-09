@@ -97,6 +97,39 @@ function collectToolUses(value: unknown, output: TranscriptToolUse[]): void {
   for (const child of Object.values(record)) collectToolUses(child, output);
 }
 
+/**
+ * Concatenate only what the model SAID — assistant text blocks — excluding tool results and
+ * file contents it merely read.
+ *
+ * Matching banner markers against the raw transcript is unsound: on substantial prompts the
+ * model is expected to READ the Algorithm file, and that file contains banner examples. The
+ * routing grader would then pass on text the model never emitted. final_message alone is
+ * also wrong, because a mode banner opens the FIRST assistant turn of an agentic run, not
+ * the last.
+ */
+export function assistantText(transcript: string): string {
+  const parts: string[] = [];
+  for (const line of transcript.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line) as { type?: string; message?: { content?: unknown } };
+      if (event.type !== "assistant") continue;
+      const content = event.message?.content;
+      if (typeof content === "string") { parts.push(content); continue; }
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (block && typeof block === "object" && (block as { type?: string }).type === "text") {
+          const text = (block as { text?: unknown }).text;
+          if (typeof text === "string") parts.push(text);
+        }
+      }
+    } catch {
+      // Malformed lines are evidence, not assistant speech.
+    }
+  }
+  return parts.join("\n");
+}
+
 function transcriptToolUses(transcript: string): TranscriptToolUse[] {
   const calls: TranscriptToolUse[] = [];
   for (const line of transcript.split(/\r?\n/)) {
@@ -282,7 +315,9 @@ export async function gradeExpectation(expectation: Expectation, context: GradeC
       const mode = typeof expectation.expect_mode === "string" ? expectation.expect_mode : "";
       const marker = markers?.[mode];
       if (marker === null || marker === undefined) return outcome("skipped", "routing markers unavailable for this version");
-      return matches(context.transcript, marker) ? pass(`matched ${mode} routing marker`) : fail(`missing ${mode} routing marker`);
+      // Assistant speech only — see assistantText(): the raw transcript contains files the
+      // model read, and the Algorithm file it is SUPPOSED to read carries banner examples.
+      return matches(assistantText(context.transcript), marker) ? pass(`matched ${mode} routing marker`) : fail(`missing ${mode} routing marker`);
     }
 
     return fail(`unsupported grader ${type}`);

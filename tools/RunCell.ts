@@ -202,6 +202,9 @@ async function main(): Promise<void> {
     baseline: before,
     command: spawnArgv,
     system_prompt_file: systemPromptFile ?? null,
+    // Isolation provenance: a later reader should be able to confirm the boundary from the
+    // artifact alone, without re-probing a machine whose state has since moved on.
+    isolation: { home: fakeHome, config_dir: sandbox, seatbelt_profile: join(output, "sandbox.sb") },
     ...(launchError ? { launch_error: launchError } : {}),
     ...(diff.error ? { workspace_diff_error: diff.error } : {}),
   };

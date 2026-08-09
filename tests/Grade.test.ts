@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gradeExpectation, type GradeContext } from "../tools/Grade.ts";
+import { gradeExpectation, type GradeContext, assistantText } from "../tools/Grade.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -101,10 +101,16 @@ describe("Grade code graders", () => {
   });
 
   test("routing matches configured mode and skips null markers", async () => {
-    const ctx = await context({ transcript: "... LIGHT ..." });
-    expect(await status({ grader: "code:routing", expect_mode: "light" }, ctx)).toBe("pass");
-    expect(await status({ grader: "code:routing", expect_mode: "light" }, await context({ version: "L7-GPT", transcript: "... LIGHT ..." }))).toBe("pass");
+    // Routing reads assistant speech, so the marker has to be something the model SAID.
+    const said = `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "... LIGHT ..." }] } })}\n`;
+    expect(await status({ grader: "code:routing", expect_mode: "light" }, await context({ transcript: said }))).toBe("pass");
+    expect(await status({ grader: "code:routing", expect_mode: "light" }, await context({ version: "L7-GPT", transcript: said }))).toBe("pass");
     expect(await status({ grader: "code:routing", expect_mode: "heavy" }, await context({ version: "RAW" }))).toBe("skipped");
+  });
+
+  test("routing does not match a marker the model only READ in a file", async () => {
+    const read = `${JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", content: "template: ... LIGHT ..." }] } })}\n`;
+    expect(await status({ grader: "code:routing", expect_mode: "light" }, await context({ transcript: read }))).toBe("fail");
   });
 
   test("judge rubrics are retained as pending rows", async () => {
@@ -122,4 +128,18 @@ t2("inline (?i) flag compiles and matches case-insensitively", () => {
 
 t2("invalid regex surfaces as thrown error, not silent fail", () => {
   e2(() => compileForTest("(?bad)x")).toThrow();
+});
+
+test("routing markers are matched against assistant speech, not files the model read", async () => {
+  // A heavy prompt is SUPPOSED to read the Algorithm file, which contains banner examples.
+  // Matching the raw transcript would score that as correct routing.
+  const transcript = [
+    JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", content: "♻︎ Entering the PAI ALGORITHM… (v6.3.0)" }] } }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Port 80." }] } }),
+  ].join("\n");
+  expect(assistantText(transcript)).toBe("Port 80.");
+  expect(assistantText(transcript)).not.toContain("ALGORITHM");
+
+  const emitted = JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "♻︎ Entering the PAI ALGORITHM… (v6.3.0)" }] } });
+  expect(assistantText(emitted)).toContain("ALGORITHM");
 });
