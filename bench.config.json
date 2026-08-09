@@ -15,9 +15,7 @@
     { "id": "sonnet-5", "cli_arg": "claude-sonnet-5" },
     { "id": "haiku-4-5", "cli_arg": "claude-haiku-4-5-20251001" }
   ],
-  "gpt_models": [
-    { "id": "gpt-5.6-terra", "versions": ["RAW", "L7"] }
-  ],
+  "gpt_models": [],
   "trials": { "T1": 1, "T2": 1, "T3": 2, "T4": 2 },
   "expected_runs": 216,
   "runner": {
@@ -26,8 +24,16 @@
     "concurrency": 2,
     "timeout_per_run_s": 1200
   },
-  "phase2_reserved": {
-    "versions": ["L5@v5.0.0", "L6@v6.0.5", "L7-GPT"],
-    "models": ["opus-5", "haiku-4-5", "gpt-5.6-terra"]
+  "phase3_claudex": {
+    "note": "GPT through the SAME CC harness via claudex (ChatGPT-auth wrapper) — hooks fire, so this isolates prompts-vs-plumbing. Prompt-only GPT lanes cancelled 2026-08-08 (real GPT users run harnessed: claudex or a pi adaptation).",
+    "engine": "claudex",
+    "versions": ["RAW", "L7", "FORK"],
+    "models": ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"],
+    "sol_concurrency": 1,
+    "blocked_on": "claudex ChatGPT sign-in (attended)"
+  },
+  "phase_reserved": {
+    "versions": ["L5@v5.0.0", "L6@v6.0.5"],
+    "models": ["opus-5"]
   }
 }
