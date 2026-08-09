@@ -10,3 +10,4 @@ node_modules/
 *.log
 # t3-build workspace diffs are multi-MB lockfile/cache noise (and trip secret scanners on generated token-shaped strings)
 results/phase1/*/*/t3-build/trial-*/workspace-diff.txt
+results/phase1/RAW-GPT/
