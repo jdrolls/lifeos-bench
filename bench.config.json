@@ -1,41 +1,105 @@
 {
   "phase": 1,
   "versions": [
-    { "id": "RAW",  "kind": "bare",     "source": null, "publish_transcripts": true,
-      "routing_markers": { "heavy": null, "light": null },
-      "note": "Bare Claude Code, empty CLAUDE_CONFIG_DIR. Control baseline. Routing graders are skipped (no scaffold to route)." },
-    { "id": "L7",   "kind": "upstream", "source": "vendor/LifeOS@v7.28.3", "publish_transcripts": true,
-      "routing_markers": { "heavy": "ALGORITHM|♻", "light": "MINIMAL|NATIVE" } },
-    { "id": "FORK", "kind": "local",    "source": "~/.claude (staged, scrubbed synthetic user)", "publish_transcripts": false,
-      "routing_markers": { "heavy": "PAI ALGORITHM|♻", "light": "PAI \\| NATIVE|═══ PAI ═══" },
-      "note": "PRIVATE lane: transcripts and staged config never leave this machine. Only metrics rows are published." }
+    {
+      "id": "RAW",
+      "kind": "bare",
+      "source": null,
+      "publish_transcripts": true,
+      "routing_markers": {
+        "heavy": null,
+        "light": null
+      },
+      "note": "Bare Claude Code, empty CLAUDE_CONFIG_DIR. Control baseline. Routing graders are skipped (no scaffold to route)."
+    },
+    {
+      "id": "L7",
+      "kind": "upstream",
+      "source": "vendor/LifeOS@v7.28.3",
+      "publish_transcripts": true,
+      "routing_markers": {
+        "heavy": "ALGORITHM|♻",
+        "light": "MINIMAL|NATIVE"
+      }
+    },
+    {
+      "id": "FORK",
+      "kind": "local",
+      "source": "~/.claude (staged, scrubbed synthetic user)",
+      "publish_transcripts": false,
+      "routing_markers": {
+        "heavy": "PAI ALGORITHM|♻",
+        "light": "PAI \\| NATIVE|═══ PAI ═══"
+      },
+      "note": "PRIVATE lane: transcripts and staged config never leave this machine. Only metrics rows are published."
+    }
   ],
   "models": [
-    { "id": "fable-5",  "cli_arg": "claude-fable-5" },
-    { "id": "sonnet-5", "cli_arg": "claude-sonnet-5" },
-    { "id": "haiku-4-5", "cli_arg": "claude-haiku-4-5-20251001" },
-    { "id": "gpt-5.6-terra", "cli_arg": "gpt-5.6-terra", "engine": "claudex" },
-    { "id": "gpt-5.6-luna",  "cli_arg": "gpt-5.6-luna",  "engine": "claudex" }
+    {
+      "id": "fable-5",
+      "cli_arg": "claude-fable-5"
+    },
+    {
+      "id": "sonnet-5",
+      "cli_arg": "claude-sonnet-5"
+    },
+    {
+      "id": "haiku-4-5",
+      "cli_arg": "claude-haiku-4-5-20251001"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "cli_arg": "gpt-5.6-terra",
+      "engine": "claudex"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "cli_arg": "gpt-5.6-luna",
+      "engine": "claudex"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "cli_arg": "gpt-5.6-sol",
+      "engine": "claudex"
+    }
   ],
   "gpt_models": [],
-  "trials": { "T1": 1, "T2": 1, "T3": 2, "T4": 2 },
-  "expected_runs": 360,
+  "trials": {
+    "T1": 1,
+    "T2": 1,
+    "T3": 2,
+    "T4": 2
+  },
+  "expected_runs": 432,
   "runner": {
     "detached": true,
     "billing": "subscription-oauth (scrub ANTHROPIC_API_KEY + ANTHROPIC_AUTH_TOKEN; never --bare)",
-    "concurrency": 2,
+    "concurrency": 1,
     "timeout_per_run_s": 1200
   },
   "phase3_claudex": {
     "note": "GPT through the SAME CC harness via claudex (ChatGPT-auth wrapper) — hooks fire, so this isolates prompts-vs-plumbing. Prompt-only GPT lanes cancelled 2026-08-08 (real GPT users run harnessed: claudex or a pi adaptation).",
     "engine": "claudex",
-    "versions": ["RAW", "L7", "FORK"],
-    "models": ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"],
+    "versions": [
+      "RAW",
+      "L7",
+      "FORK"
+    ],
+    "models": [
+      "gpt-5.6-terra",
+      "gpt-5.6-sol",
+      "gpt-5.6-luna"
+    ],
     "sol_concurrency": 1,
     "blocked_on": "claudex ChatGPT sign-in (attended)"
   },
   "phase_reserved": {
-    "versions": ["L5@v5.0.0", "L6@v6.0.5"],
-    "models": ["opus-5"]
+    "versions": [
+      "L5@v5.0.0",
+      "L6@v6.0.5"
+    ],
+    "models": [
+      "opus-5"
+    ]
   }
 }
