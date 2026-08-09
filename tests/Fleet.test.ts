@@ -12,11 +12,24 @@ test("Fleet enumerates exactly the configured matrix", async () => {
   const golden = await json<any>(path("goldenset", "goldenset.json"));
   const cells = enumerate(config, golden);
 
+  // Mirror enumerate()'s narrowing: a version may allow a subset of models, and a tier may
+  // narrow further on top of that.
+  const claudeExpected = config.versions.reduce((versionTotal: number, version: any) => {
+    const versionModels = version.models_allowlist
+      ? config.models.filter((model: any) => version.models_allowlist.includes(model.id))
+      : config.models;
+    return versionTotal + versionModels.reduce((modelTotal: number, model: any) => {
+      return modelTotal + golden.prompts.reduce((promptTotal: number, prompt: any) => {
+        const tierModels = config.tier_models?.[prompt.tier];
+        if (tierModels && !tierModels.includes(model.id)) return promptTotal;
+        return promptTotal + config.trials[prompt.tier];
+      }, 0);
+    }, 0);
+  }, 0);
   const trialsPerPrompt = golden.prompts.reduce(
     (total: number, prompt: any) => total + config.trials[prompt.tier],
     0,
   );
-  const claudeExpected = config.versions.length * config.models.length * trialsPerPrompt;
   const gptExpected = (config.gpt_models ?? []).reduce(
     (total: number, model: any) => total + model.versions.length * trialsPerPrompt,
     0,

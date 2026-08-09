@@ -21,8 +21,10 @@ const REAL_IDENTITY_TOKENS: string[][] = [
   ["Ralph ", "Trades"],
   ["ralph-", "trades"],
   ["NJust", "ice"],
-  ["Bank of ", "America"],
-  ["River", "ton"],
+  // Deliberately NOT included: employer and city names. They are real operator attributes,
+  // but they also appear in upstream's own skill documentation as generic examples, so as
+  // tokens they produce constant false positives — and a detector that cries wolf gets
+  // switched off. High-specificity tokens only.
 ];
 
 /** Any absolute path into a real user home is an escape regardless of whose home it is. */
@@ -77,6 +79,11 @@ export async function leakCheck(root: string): Promise<Violation[]> {
   return violations;
 }
 
+/**
+ * Scope note: point this at RUN ARTIFACTS (results/), never at a staged sandbox. Vendored
+ * scaffolds legitimately reference credential filenames, browser support directories, and
+ * example home paths in their own source; flagging those says nothing about containment.
+ */
 async function main(): Promise<void> {
   const root = arg("--root") ?? path("results");
   const violations = await leakCheck(root);

@@ -9,10 +9,14 @@ export type Cell = {
   engine: "claude" | "gpt";
 };
 type BenchConfig = {
-  versions: Array<{ id: string }>;
+  // models_allowlist narrows a version to a subset of models; tier_models narrows a tier the
+  // same way. The bisect needs every version but only two models; the inverted-U curve needs
+  // every model but only two versions. Crossing everything would pay for both.
+  versions: Array<{ id: string; models_allowlist?: string[] }>;
   models: Array<{ id: string }>;
   gpt_models?: Array<{ id: string; versions: string[] }>;
   trials: Record<string, number>;
+  tier_models?: Record<string, string[]>;
   expected_runs: number;
   runner: { concurrency: number };
 };
@@ -32,10 +36,27 @@ function promptTrials(config: BenchConfig, tier: string): number {
 
 /** Enumerate both engines while retaining distinct result lanes for prompt-only GPT runs. */
 export function enumerate(config: BenchConfig, golden: GoldenSet): Cell[] {
+  const declared = new Set(config.models.map(({ id }) => id));
+  for (const version of config.versions) {
+    for (const allowed of version.models_allowlist ?? []) {
+      if (!declared.has(allowed)) throw new Error(`version ${version.id} allows undeclared model ${allowed}`);
+    }
+  }
+  for (const [tier, models] of Object.entries(config.tier_models ?? {})) {
+    for (const allowed of models) {
+      if (!declared.has(allowed)) throw new Error(`tier ${tier} allows undeclared model ${allowed}`);
+    }
+  }
+
   const cells: Cell[] = [];
   for (const version of config.versions) {
-    for (const model of config.models) {
+    const versionModels = version.models_allowlist
+      ? config.models.filter((model) => version.models_allowlist?.includes(model.id))
+      : config.models;
+    for (const model of versionModels) {
       for (const prompt of golden.prompts) {
+        const tierModels = config.tier_models?.[prompt.tier];
+        if (tierModels && !tierModels.includes(model.id)) continue;
         for (let trial = 1; trial <= promptTrials(config, prompt.tier); trial++) {
           cells.push({ version: version.id, model: model.id, prompt: prompt.id, trial, tier: prompt.tier, engine: "claude" });
         }

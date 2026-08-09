@@ -2,6 +2,7 @@ import { chmod, cp, readFile, rm, stat, symlink, writeFile } from "node:fs/promi
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { arg, copyTree, ensure, exists, files, path, reset } from "./Common.ts";
+import { stagePersona } from "./StagePersona.ts";
 
 // Keep the static harness free of private-profile literals while checking the exact
 // prohibited values after concatenation in the staged tree.
@@ -22,7 +23,41 @@ const rewriteMap: Array<[string, string]> = [
   [["jumpin", ".dinner.rolls@gmail.com"].join(""), "alex@example.com"],
   [["jd", "rolls"].join(""), "alexdoe"],
 ];
-const versions = new Set(["RAW", "L7", "FORK"]);
+// FORK is retained for local experiments behind --fork-src but is no longer part of the
+// published matrix: the comparison is upstream LifeOS versions against a bare control.
+const versions = new Set(["RAW", "L5", "L6", "L7", "FORK"]);
+
+/** Persona names substituted into each version's install placeholders, as install.sh would. */
+const PERSONA_TOKENS: Array<[string, string]> = [
+  ["{{PRINCIPAL_NAME}}", "Bruce"],
+  ["{PRINCIPAL.NAME}", "Bruce"],
+  ["{{DA_NAME}}", "Alfred"],
+  ["{DA_IDENTITY.NAME}", "Alfred"],
+];
+
+/** Where each upstream release keeps the payload that becomes the Claude config dir. */
+const UPSTREAM_PAYLOADS: Record<string, { payload: string[]; user: string[]; template: string | null; systemPromptDir: string }> = {
+  // v5.0.0 predates the LifeOS/install layout: the release ships a whole .claude tree, and
+  // its CLAUDE.md is already the entrypoint with identity @-imports ACTIVE.
+  L5: {
+    payload: ["vendor", "LifeOS-v5", "Releases", "v5.0.0", ".claude"],
+    user: ["PAI", "USER"],
+    template: null,
+    systemPromptDir: "PAI",
+  },
+  L6: {
+    payload: ["vendor", "LifeOS-v6", "LifeOS", "install"],
+    user: ["LIFEOS", "USER"],
+    template: "CLAUDE.template.md",
+    systemPromptDir: "LIFEOS",
+  },
+  L7: {
+    payload: ["vendor", "LifeOS", "LifeOS", "install"],
+    user: ["LIFEOS", "USER"],
+    template: "CLAUDE.template.md",
+    systemPromptDir: "LIFEOS",
+  },
+};
 const sharedAuthDirectory = path("sandboxes", "_auth");
 
 /** Prefer the most recently refreshed credentials file so the shared chain starts valid. */
@@ -74,28 +109,86 @@ async function stageRaw(destination: string): Promise<void> {
   }, null, 2)}\n`);
 }
 
-async function stageL7(destination: string): Promise<void> {
-  // v7.28.3's released config payload is nested beneath LifeOS/install, while the
-  // target is the Claude config directory itself. Copy its contents into the target.
-  const installPayload = path("vendor", "LifeOS", "LifeOS", "install");
-  if (!(await exists(installPayload))) throw new Error(`upstream install payload is missing: ${installPayload}`);
-  await copyTree(installPayload, destination);
+/** Substitute the install-time identity placeholders, as each version's install.sh would. */
+async function substitutePersonaTokens(destination: string): Promise<void> {
+  for (const relativeFile of await files(destination)) {
+    if (!/\.(md|json|ts|sh|txt|yaml|yml)$/.test(relativeFile)) continue;
+    const candidate = join(destination, relativeFile);
+    const content = await readFile(candidate, "utf8").catch(() => undefined);
+    if (content === undefined) continue;
+    let next = content;
+    for (const [from, to] of PERSONA_TOKENS) next = next.split(from).join(to);
+    if (next !== content) await writeFile(candidate, next);
+  }
+}
 
-  const template = join(destination, "CLAUDE.template.md");
-  if (!(await exists(template))) throw new Error("upstream install payload is missing CLAUDE.template.md");
-  const claudeFile = join(destination, "CLAUDE.md");
-  await cp(template, claudeFile);
-  // Do NOT @-import the Algorithm here. Phases 1-3 appended `@LIFEOS/ALGORITHM/<version>`,
-  // which never resolved (LATEST holds "8.17.3"; the file is "v8.17.3.md", and Claude Code
-  // does not extension-guess) — so the lane silently ran with no Algorithm at all, and the
-  // model went looking for one outside the sandbox. Upstream never imports it either: the
-  // system prompt instructs an on-demand read, which is now wired via --append-system-prompt-file.
-  // Assert the referenced file exists so a future rename fails loudly instead of silently.
-  const algorithmVersion = (await readFile(join(destination, "LIFEOS", "ALGORITHM", "LATEST"), "utf8")).trim();
-  if (!/^[A-Za-z0-9._-]+$/.test(algorithmVersion)) throw new Error("upstream algorithm LATEST is invalid");
-  const algorithmFile = join(destination, "LIFEOS", "ALGORITHM", `v${algorithmVersion}.md`);
-  if (!(await exists(algorithmFile))) throw new Error(`upstream algorithm file is missing: ${algorithmFile}`);
-  await overlaySyntheticUser(destination);
+/**
+ * Run the version's OWN import-activation tool rather than reimplementing its rules.
+ * v6/v7 ship the identity @-imports commented out, to be activated by the agentic setup
+ * once USER is scaffolded. Phases 1-3 skipped this step entirely, so the synthetic profile
+ * was staged into a tree that never imported it — which would have floored any
+ * personalization measurement for reasons that have nothing to do with the scaffold.
+ */
+async function activateIdentityImports(destination: string, payload: string): Promise<string[]> {
+  const tool = join(payload, "skills", "LifeOS", "Tools", "ActivateImports.ts");
+  if (!(await exists(tool))) throw new Error(`upstream ActivateImports tool is missing: ${tool}`);
+  const proc = Bun.spawn(["bun", tool, "--config-root", destination, "--apply", "--allow-dev"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (exitCode !== 0) throw new Error(`ActivateImports failed (${exitCode}): ${stderr.trim() || stdout.trim()}`);
+  const activated = JSON.parse(stdout) as { activated?: string[]; skipped?: string[] };
+  if (!activated.activated?.length) {
+    throw new Error(`ActivateImports activated nothing; skipped=${JSON.stringify(activated.skipped ?? [])}`);
+  }
+  return activated.activated;
+}
+
+/**
+ * Stage an upstream LifeOS release into a Claude config directory.
+ *
+ * Deliberately does NOT @-import the Algorithm. Phases 1-3 appended
+ * `@LIFEOS/ALGORITHM/<version>`, which never resolved (LATEST holds "8.17.3"; the file is
+ * "v8.17.3.md", and Claude Code does not extension-guess) — so the lane ran with no
+ * Algorithm and the model went hunting for one outside its sandbox. Upstream never imports
+ * it either: the system prompt instructs an on-demand read, wired via
+ * --append-system-prompt-file. The existence assertion below keeps a silent rename loud.
+ */
+async function stageUpstream(version: string, destination: string): Promise<void> {
+  const spec = UPSTREAM_PAYLOADS[version];
+  if (!spec) throw new Error(`no upstream payload mapping for ${version}`);
+  const payload = path(...spec.payload);
+  if (!(await exists(payload))) throw new Error(`upstream payload is missing: ${payload} (vendor the tag first)`);
+  await copyTree(payload, destination);
+
+  if (spec.template) {
+    const template = join(destination, spec.template);
+    if (!(await exists(template))) throw new Error(`${version} payload is missing ${spec.template}`);
+    await cp(template, join(destination, "CLAUDE.md"));
+  }
+  if (!(await exists(join(destination, "CLAUDE.md")))) throw new Error(`${version} produced no CLAUDE.md`);
+
+  const algorithmDirectory = join(destination, spec.systemPromptDir, "ALGORITHM");
+  const algorithmVersion = (await readFile(join(algorithmDirectory, "LATEST"), "utf8")).trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(algorithmVersion)) throw new Error(`${version} algorithm LATEST is invalid`);
+  const algorithmCandidates = [join(algorithmDirectory, `v${algorithmVersion}.md`), join(algorithmDirectory, `${algorithmVersion}.md`)];
+  let algorithmFound = false;
+  for (const candidate of algorithmCandidates) if (await exists(candidate)) algorithmFound = true;
+  if (!algorithmFound) throw new Error(`${version} algorithm file is missing for LATEST=${algorithmVersion}`);
+
+  // Replace, never merge: the shipped USER scaffold is template prose, not a profile.
+  await rm(join(destination, "USER"), { recursive: true, force: true });
+  await stagePersona(join(destination, ...spec.user), version === "L5" ? "v5" : "v67");
+
+  // v5 ships its identity imports already active; v6/v7 need their own setup step.
+  if (spec.template) await activateIdentityImports(destination, payload);
+  await substitutePersonaTokens(destination);
+  await assertScrubbed(destination);
 }
 
 // Scaffolding only — PAI/MEMORY, PAI/USER, agent-runs, PULSE, releases, and .git are
@@ -167,7 +260,7 @@ async function main(): Promise<void> {
   await reset(destination);
   try {
     if (version === "RAW") await stageRaw(destination);
-    else if (version === "L7") await stageL7(destination);
+    else if (version in UPSTREAM_PAYLOADS) await stageUpstream(version, destination);
     else {
       const source = arg("--fork-src");
       if (!source) throw new Error("FORK requires --fork-src DIR");

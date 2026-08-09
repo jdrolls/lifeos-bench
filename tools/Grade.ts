@@ -26,7 +26,7 @@ export type GradeContext = {
   workspace: string;
   transcript: string;
   meta: TrialMeta;
-  config: { versions?: Array<{ id: string; routing_markers?: Record<string, string | null> }> };
+  config: { versions?: Array<{ id: string; routing_markers?: Record<string, string | null>; algorithm_path?: string | null }> };
 };
 
 type CommandResult = { stdout: string; stderr: string; code: number; timedOut: boolean };
@@ -153,6 +153,14 @@ export async function gradeExpectation(expectation: Expectation, context: GradeC
     const fail = (detail: string) => outcome("fail", detail);
     const pass = (detail: string) => outcome("pass", detail);
     const type = expectation.grader;
+
+    // Some expectations are unanswerable for a version rather than failed by it: the bare
+    // control cannot cite a profile it has no way to read. Scoring that as a failure would
+    // load the control's floor with a structural impossibility instead of a measurement.
+    const skipOn = expectation.skip_on_versions;
+    if (Array.isArray(skipOn) && skipOn.some((version) => version === context.version)) {
+      return outcome("skipped", `expectation does not apply to ${context.version}`);
+    }
     if (type === "judge:rubric") return outcome("pending_judge", `rubric ${String(expectation.rubric ?? "unnamed")} awaits external judge`);
 
     const relativeFile = typeof expectation.file === "string" ? expectation.file : undefined;
@@ -232,6 +240,27 @@ export async function gradeExpectation(expectation: Expectation, context: GradeC
         if (firstEdit >= 0 && matchingCall > firstEdit) return fail("command occurred after the first edit");
       }
       return pass("command found in required order");
+    }
+
+    if (type === "code:algorithm_read") {
+      // Version-neutral routing signal. Banner grepping only works while a version HAS
+      // banners: v5/v6 announce three modes, v7.28.3 retired modes outright and announces
+      // nothing. What every generation shares is the instruction to READ the Algorithm file
+      // before substantial work — a tool call, recorded in every transcript, that means the
+      // same thing across versions. Absence of a scaffold (RAW) skips, exactly like routing.
+      const algorithmVersion = context.version.endsWith("-GPT") ? context.version.slice(0, -4) : context.version;
+      const directory = context.config.versions?.find((version) => version.id === algorithmVersion)?.algorithm_path;
+      if (directory === null || directory === undefined) {
+        return outcome("skipped", "version declares no algorithm path");
+      }
+      const reads = transcriptToolUses(context.transcript).filter((call) => {
+        if (call.name?.toLowerCase() !== "read") return false;
+        const input = call.input as { file_path?: unknown } | undefined;
+        return typeof input?.file_path === "string" && input.file_path.includes(directory);
+      });
+      const shouldRead = expectation.expect !== "not_read";
+      if (shouldRead) return reads.length > 0 ? pass(`read the algorithm (${reads.length} call(s))`) : fail("never read the algorithm");
+      return reads.length === 0 ? pass("did not read the algorithm") : fail(`read the algorithm ${reads.length} time(s) on a trivial turn`);
     }
 
     if (type === "code:routing") {

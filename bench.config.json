@@ -1,109 +1,80 @@
 {
-  "phase": 1,
+  "phase": 4,
+  "matrix_note": "Upstream LifeOS releases against a bare control. The private fork lane was retired after Phase 3: it required withheld transcripts, and the question worth publishing is whether the framework helps, not whose fork is better.",
   "versions": [
     {
       "id": "RAW",
       "kind": "bare",
       "source": null,
       "system_prompt": null,
+      "algorithm_path": null,
       "publish_transcripts": true,
-      "routing_markers": {
-        "heavy": null,
-        "light": null
-      },
-      "note": "Bare Claude Code, empty CLAUDE_CONFIG_DIR. Control baseline. Routing graders are skipped (no scaffold to route)."
+      "routing_markers": { "heavy": null, "light": null },
+      "models_allowlist": ["sonnet-5", "gpt-5.6-terra", "fable-5", "haiku-4-5", "gpt-5.6-luna", "gpt-5.6-sol", "opus-5", "opus-4-8"],
+      "note": "Bare Claude Code, empty CLAUDE_CONFIG_DIR. Control baseline: structurally cannot know the persona, so T5 grounding checks are skipped and it anchors the floor."
+    },
+    {
+      "id": "L5",
+      "kind": "upstream",
+      "source": "vendor/LifeOS-v5@v5.0.0",
+      "system_prompt": "PAI/PAI_SYSTEM_PROMPT.md",
+      "algorithm_path": "PAI/ALGORITHM",
+      "publish_transcripts": true,
+      "routing_markers": { "heavy": "♻|Entering the PAI ALGORITHM", "light": "PAI \\| NATIVE MODE|═══ PAI ═══" },
+      "models_allowlist": ["sonnet-5", "gpt-5.6-terra"],
+      "note": "v5.0.0 ships a whole .claude tree with identity @-imports already ACTIVE and mode templates inline in CLAUDE.md."
+    },
+    {
+      "id": "L6",
+      "kind": "upstream",
+      "source": "vendor/LifeOS-v6@v6.0.5",
+      "system_prompt": "LIFEOS/LIFEOS_SYSTEM_PROMPT.md",
+      "algorithm_path": "LIFEOS/ALGORITHM",
+      "publish_transcripts": true,
+      "routing_markers": { "heavy": "♻|Entering the PAI ALGORITHM", "light": "LifeOS \\| NATIVE MODE|═══ LifeOS ═══" },
+      "models_allowlist": ["sonnet-5", "gpt-5.6-terra"],
+      "note": "v6.0.5 still has three modes, but defines them ONLY in LIFEOS_SYSTEM_PROMPT.md — which is why loading it via --append-system-prompt-file is mandatory, not optional."
     },
     {
       "id": "L7",
       "kind": "upstream",
       "source": "vendor/LifeOS@v7.28.3",
       "system_prompt": "LIFEOS/LIFEOS_SYSTEM_PROMPT.md",
+      "algorithm_path": "LIFEOS/ALGORITHM",
       "publish_transcripts": true,
-      "routing_markers": {
-        "heavy": null,
-        "light": null
-      },
-      "note": "v7.28.3 retired modes entirely (LIFEOS_SYSTEM_PROMPT.md: 'One format, every response — there are no modes'). Banner markers are therefore null and the routing grader is skipped; routing is measured behaviourally via code:algorithm_read instead."
-    },
-    {
-      "id": "FORK",
-      "kind": "local",
-      "source": "~/.claude (staged, scrubbed synthetic user)",
-      "system_prompt": "PAI/PAI_SYSTEM_PROMPT.md",
-      "publish_transcripts": false,
-      "routing_markers": {
-        "heavy": "PAI ALGORITHM|♻",
-        "light": "PAI \\| NATIVE|═══ PAI ═══"
-      },
-      "note": "PRIVATE lane: transcripts and staged config never leave this machine. Only metrics rows are published."
+      "routing_markers": { "heavy": null, "light": null },
+      "models_allowlist": ["sonnet-5", "gpt-5.6-terra", "fable-5", "haiku-4-5", "gpt-5.6-luna", "gpt-5.6-sol", "opus-5", "opus-4-8"],
+      "note": "v7.28.3 retired modes outright ('One format, every response — there are no modes'). Banner markers are null by fact, not by omission; routing is measured behaviourally via code:algorithm_read."
     }
   ],
   "models": [
-    {
-      "id": "fable-5",
-      "cli_arg": "claude-fable-5"
-    },
-    {
-      "id": "sonnet-5",
-      "cli_arg": "claude-sonnet-5"
-    },
-    {
-      "id": "haiku-4-5",
-      "cli_arg": "claude-haiku-4-5-20251001"
-    },
-    {
-      "id": "gpt-5.6-terra",
-      "cli_arg": "gpt-5.6-terra",
-      "engine": "claudex"
-    },
-    {
-      "id": "gpt-5.6-luna",
-      "cli_arg": "gpt-5.6-luna",
-      "engine": "claudex"
-    },
-    {
-      "id": "gpt-5.6-sol",
-      "cli_arg": "gpt-5.6-sol",
-      "engine": "claudex"
-    }
+    { "id": "sonnet-5", "cli_arg": "claude-sonnet-5" },
+    { "id": "fable-5", "cli_arg": "claude-fable-5" },
+    { "id": "haiku-4-5", "cli_arg": "claude-haiku-4-5-20251001" },
+    { "id": "opus-5", "cli_arg": "claude-opus-5" },
+    { "id": "opus-4-8", "cli_arg": "claude-opus-4-8" },
+    { "id": "gpt-5.6-terra", "cli_arg": "gpt-5.6-terra", "engine": "claudex" },
+    { "id": "gpt-5.6-luna", "cli_arg": "gpt-5.6-luna", "engine": "claudex" },
+    { "id": "gpt-5.6-sol", "cli_arg": "gpt-5.6-sol", "engine": "claudex" }
   ],
   "gpt_models": [],
-  "trials": {
-    "T1": 1,
-    "T2": 1,
-    "T3": 2,
-    "T4": 2
+  "trials": { "T1": 1, "T2": 1, "T3": 2, "T4": 2, "T5": 2 },
+  "tier_models": {
+    "T5": ["sonnet-5", "gpt-5.6-terra"]
   },
-  "expected_runs": 432,
+  "tier_models_note": "T5 (personalization) runs on the two bisect models only. Grounding is a property of the scaffold, not of model tier, so paying for it across eight models buys little.",
+  "expected_runs": 560,
   "runner": {
     "detached": true,
     "billing": "subscription-oauth (scrub ANTHROPIC_API_KEY + ANTHROPIC_AUTH_TOKEN; never --bare)",
     "concurrency": 1,
-    "timeout_per_run_s": 1200
+    "timeout_per_run_s": 1200,
+    "isolation": "HOME redirected to sandboxes/_home/<VERSION> (fidelity) + sandbox-exec seatbelt denying the operator home (safety) + LeakCheck marking escapes contaminated (validity)"
   },
-  "phase3_claudex": {
-    "note": "GPT through the SAME CC harness via claudex (ChatGPT-auth wrapper) — hooks fire, so this isolates prompts-vs-plumbing. Prompt-only GPT lanes cancelled 2026-08-08 (real GPT users run harnessed: claudex or a pi adaptation).",
+  "claudex": {
+    "note": "GPT through the SAME CC harness via claudex (ChatGPT-auth wrapper) so hooks fire identically — this isolates prompts-vs-plumbing.",
     "engine": "claudex",
-    "versions": [
-      "RAW",
-      "L7",
-      "FORK"
-    ],
-    "models": [
-      "gpt-5.6-terra",
-      "gpt-5.6-sol",
-      "gpt-5.6-luna"
-    ],
     "sol_concurrency": 1,
     "blocked_on": "claudex ChatGPT sign-in (attended)"
-  },
-  "phase_reserved": {
-    "versions": [
-      "L5@v5.0.0",
-      "L6@v6.0.5"
-    ],
-    "models": [
-      "opus-5"
-    ]
   }
 }

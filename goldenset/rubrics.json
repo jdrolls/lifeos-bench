@@ -1,30 +1,41 @@
 {
-  "version": "1.0.0",
+  "version": "2.0.0",
   "frozen": "2026-08-07",
-  "scale": "1-5; min_score in goldenset is the pass floor. Judge sees ONLY the prompt, the final response, and (where noted) the workspace diff — never the framework name, model name, or transcript banners, so scaffolding cannot be identified and favored.",
+  "scale": "1-5; min_score in goldenset is the pass floor. Judge sees ONLY the prompt, the final response, and (where noted) the workspace diff \u2014 never the framework name, model name, or transcript banners, so scaffolding cannot be identified and favored.",
   "rubrics": {
     "t2-research": {
-      "inputs": ["prompt", "final_message"],
+      "inputs": [
+        "prompt",
+        "final_message"
+      ],
       "criteria": [
         "Names at least three genuinely distinct tradeoff dimensions (e.g. concurrency/locking, ops burden, feature surface like full-text/JSON/extensions, backup/portability, resource footprint)",
-        "Each tradeoff is concrete and correct — no fabricated capabilities or wrong defaults",
+        "Each tradeoff is concrete and correct \u2014 no fabricated capabilities or wrong defaults",
         "Framed for the stated context (single-user, local-first) rather than generic server advice",
         "No filler or hedging that dodges the comparison"
       ],
       "score_anchor": "5 = all four criteria; 3 = three distinct correct tradeoffs but weakly contextualized; 1 = fewer than three distinct points or a factual error"
     },
     "t3-build": {
-      "inputs": ["prompt", "final_message", "workspace_diff"],
+      "inputs": [
+        "prompt",
+        "final_message",
+        "workspace_diff"
+      ],
       "criteria": [
         "TTL logic actually implemented and tested (fresh-hit, stale-miss both covered)",
-        "Tests are hermetic — no live network calls",
+        "Tests are hermetic \u2014 no live network calls",
         "Cache keying is collision-safe (hash, not raw URL in filename)",
-        "Code is proportionate — no framework bloat for a small CLI"
+        "Code is proportionate \u2014 no framework bloat for a small CLI"
       ],
       "score_anchor": "5 = all criteria; 3 = works with tests but one gap (e.g. stale path untested); 1 = untested, network-dependent tests, or TTL not actually enforced"
     },
     "t3-debug-rootcause": {
-      "inputs": ["prompt", "final_message", "workspace_diff"],
+      "inputs": [
+        "prompt",
+        "final_message",
+        "workspace_diff"
+      ],
       "criteria": [
         "Explanation names the actual mechanism (mutation of the queue during worker iteration), not just the symptom or the patched line",
         "Fix targets the mechanism with the smallest correct change",
@@ -33,14 +44,72 @@
       "score_anchor": "5 = mechanism named precisely + minimal fix; 3 = correct fix, vague explanation; 1 = symptom-patched or root cause misidentified"
     },
     "t3-plan": {
-      "inputs": ["prompt", "final_message", "workspace_diff"],
+      "inputs": [
+        "prompt",
+        "final_message",
+        "workspace_diff"
+      ],
       "criteria": [
         "Covers schema design, migration of existing data, dual-read/write or cutover strategy, and rollback",
         "Sequenced into verifiable steps with a stated done-check per step",
         "Grounded in the actual fixture app (references its real modules/data shapes), not generic boilerplate",
-        "Honors 'don't implement yet' — plan only"
+        "Honors 'don't implement yet' \u2014 plan only"
       ],
       "score_anchor": "5 = all criteria incl. rollback; 3 = credible sequence but missing rollback or done-checks; 1 = generic boilerplate or started implementing"
+    },
+    "t5-grounding": {
+      "inputs": [
+        "prompt",
+        "final_message"
+      ],
+      "criteria": [
+        "Cites SPECIFIC facts from the user's profile (named projects, named goals, the stated working hours) rather than generic advice",
+        "The facts cited are correct \u2014 no invented projects, goals, or constraints",
+        "The advice actually follows from those facts rather than name-dropping them as decoration",
+        "Does not hedge with 'if you have a calendar' style disclaimers when the profile already answers the question"
+      ],
+      "score_anchor": "5 = specific correct profile facts drive the answer; 3 = relevant but generic, or one correct fact loosely applied; 1 = generic productivity advice, or cites facts that are not in the profile"
+    },
+    "t5-stack-style": {
+      "inputs": [
+        "prompt",
+        "final_message",
+        "workspace_diff"
+      ],
+      "criteria": [
+        "Produces TypeScript intended for Bun, matching the stated hard preference, without being told in the prompt",
+        "Code is explicit and readable over clever \u2014 the stated style preference",
+        "The script actually does what was asked (dated archive of the notes directory)",
+        "No unrequested dependencies or framework scaffolding for a small script"
+      ],
+      "score_anchor": "5 = idiomatic explicit Bun TypeScript that works; 3 = correct language but clever/dense, or works with a gap; 1 = wrong language for the stated preference, or non-functional"
+    },
+    "t5-goal-reasoning": {
+      "inputs": [
+        "prompt",
+        "final_message"
+      ],
+      "criteria": [
+        "Reasons against the user's ACTUAL stated missions and problems, naming them",
+        "Engages the real tension (a time commitment versus a single-point-of-failure problem and a delegation goal) rather than listing generic pros and cons",
+        "Reaches a recommendation instead of surveying both sides and stopping",
+        "Does not invent goals or constraints the profile does not contain"
+      ],
+      "score_anchor": "5 = names the real goals and resolves the tension between them; 3 = references goals but reasons generically; 1 = generic pros-and-cons with no profile grounding"
+    },
+    "t5-conflict-awareness": {
+      "inputs": [
+        "prompt",
+        "final_message",
+        "workspace_diff"
+      ],
+      "criteria": [
+        "ACKNOWLEDGES that the explicit request conflicts with the user's standing language preference",
+        "Still honors the explicit request \u2014 the user outranks the stored preference",
+        "The acknowledgement is brief and non-preachy; it does not refuse, lecture, or demand confirmation",
+        "The helper itself is correct"
+      ],
+      "score_anchor": "5 = notes the conflict in a sentence and complies with working code; 3 = complies correctly but silently, OR flags the conflict and complies clumsily; 1 = refuses, demands approval, or silently substitutes a different language"
     }
   },
   "judging_protocol": {
