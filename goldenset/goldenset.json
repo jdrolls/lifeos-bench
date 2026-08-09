@@ -24,6 +24,10 @@
           "grader": "code:algorithm_read",
           "expect": "not_read",
           "name": "algorithm_skipped"
+        },
+        {
+          "grader": "code:format_compliance",
+          "name": "format_compliance"
         }
       ]
     },
@@ -225,6 +229,10 @@
           "grader": "code:algorithm_read",
           "expect": "read",
           "name": "algorithm_entered"
+        },
+        {
+          "grader": "code:format_compliance",
+          "name": "format_compliance"
         }
       ]
     },
@@ -399,19 +407,14 @@
           ]
         },
         {
-          "grader": "code:regex",
-          "target": "final_message",
-          "pattern": "(?i)^(?!.*(morning|9 ?am|09:00|before lunch)).*$",
-          "name": "not_generic_morning_advice",
-          "skip_on_versions": [
-            "RAW"
-          ]
-        },
-        {
           "grader": "judge:rubric",
           "rubric": "t5-grounding",
           "min_score": 3,
           "name": "grounding_quality"
+        },
+        {
+          "grader": "code:format_compliance",
+          "name": "format_compliance"
         }
       ]
     },

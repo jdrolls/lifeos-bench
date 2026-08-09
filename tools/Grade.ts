@@ -26,7 +26,7 @@ export type GradeContext = {
   workspace: string;
   transcript: string;
   meta: TrialMeta;
-  config: { versions?: Array<{ id: string; routing_markers?: Record<string, string | null>; algorithm_path?: string | null }> };
+  config: { versions?: Array<{ id: string; routing_markers?: Record<string, string | null>; algorithm_path?: string | null; format_marker?: string | null }> };
 };
 
 type CommandResult = { stdout: string; stderr: string; code: number; timedOut: boolean };
@@ -240,6 +240,17 @@ export async function gradeExpectation(expectation: Expectation, context: GradeC
         if (firstEdit >= 0 && matchingCall > firstEdit) return fail("command occurred after the first edit");
       }
       return pass("command found in required order");
+    }
+
+    if (type === "code:format_compliance") {
+      // Did the response follow the version's OWN documented output contract? Kept separate
+      // from routing: v7.28.3 has a format contract and no modes, so folding the two together
+      // is precisely what scored it zero for a feature it removed deliberately.
+      const formatVersion = context.version.endsWith("-GPT") ? context.version.slice(0, -4) : context.version;
+      const marker = context.config.versions?.find((version) => version.id === formatVersion)?.format_marker;
+      if (marker === null || marker === undefined) return outcome("skipped", "version declares no output format");
+      const message = context.meta.final_message ?? "";
+      return matches(message, marker) ? pass("emitted the version's output banner") : fail("output banner missing");
     }
 
     if (type === "code:algorithm_read") {

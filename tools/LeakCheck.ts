@@ -15,7 +15,9 @@ import { arg, files, path, root, text } from "./Common.ts";
 const REAL_IDENTITY_TOKENS: string[][] = [
   ["Jona", "than"],
   ["Rhoa", "des"],
-  ["jd", "rolls"],
+  // NOT the bare account name: `ls -l` inside the sandbox prints the file owner, so it
+  // appears in perfectly contained runs. It still catches escapes through ESCAPE_PATTERNS
+  // below, where it is anchored to a private-tree path rather than floating free.
   ["rhds", ".dev"],
   ["jumpin", ".dinner"],
   ["Ralph ", "Trades"],

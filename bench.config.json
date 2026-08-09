@@ -9,9 +9,22 @@
       "system_prompt": null,
       "algorithm_path": null,
       "publish_transcripts": true,
-      "routing_markers": { "heavy": null, "light": null },
-      "models_allowlist": ["sonnet-5", "gpt-5.6-terra", "fable-5", "haiku-4-5", "gpt-5.6-luna", "gpt-5.6-sol", "opus-5", "opus-4-8"],
-      "note": "Bare Claude Code, empty CLAUDE_CONFIG_DIR. Control baseline: structurally cannot know the persona, so T5 grounding checks are skipped and it anchors the floor."
+      "routing_markers": {
+        "heavy": null,
+        "light": null
+      },
+      "models_allowlist": [
+        "sonnet-5",
+        "gpt-5.6-terra",
+        "fable-5",
+        "haiku-4-5",
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "opus-5",
+        "opus-4-8"
+      ],
+      "note": "Bare Claude Code, empty CLAUDE_CONFIG_DIR. Control baseline: structurally cannot know the persona, so T5 grounding checks are skipped and it anchors the floor.",
+      "format_marker": null
     },
     {
       "id": "L5",
@@ -20,9 +33,16 @@
       "system_prompt": "PAI/PAI_SYSTEM_PROMPT.md",
       "algorithm_path": "PAI/ALGORITHM",
       "publish_transcripts": true,
-      "routing_markers": { "heavy": "♻|Entering the PAI ALGORITHM", "light": "PAI \\| NATIVE MODE|═══ PAI ═══" },
-      "models_allowlist": ["sonnet-5", "gpt-5.6-terra"],
-      "note": "v5.0.0 ships a whole .claude tree with identity @-imports already ACTIVE and mode templates inline in CLAUDE.md."
+      "routing_markers": {
+        "heavy": "\u267b|Entering the PAI ALGORITHM",
+        "light": "PAI \\| NATIVE MODE|\u2550\u2550\u2550 PAI \u2550\u2550\u2550"
+      },
+      "models_allowlist": [
+        "sonnet-5",
+        "gpt-5.6-terra"
+      ],
+      "note": "v5.0.0 ships a whole .claude tree with identity @-imports already ACTIVE and mode templates inline in CLAUDE.md.",
+      "format_marker": "\u2550\u2550\u2550\u2550 PAI \\| NATIVE MODE|\u2550\u2550\u2550 PAI \u2550\u2550\u2550|\u267b"
     },
     {
       "id": "L6",
@@ -31,9 +51,16 @@
       "system_prompt": "LIFEOS/LIFEOS_SYSTEM_PROMPT.md",
       "algorithm_path": "LIFEOS/ALGORITHM",
       "publish_transcripts": true,
-      "routing_markers": { "heavy": "♻|Entering the PAI ALGORITHM", "light": "LifeOS \\| NATIVE MODE|═══ LifeOS ═══" },
-      "models_allowlist": ["sonnet-5", "gpt-5.6-terra"],
-      "note": "v6.0.5 still has three modes, but defines them ONLY in LIFEOS_SYSTEM_PROMPT.md — which is why loading it via --append-system-prompt-file is mandatory, not optional."
+      "routing_markers": {
+        "heavy": "\u267b|Entering the PAI ALGORITHM",
+        "light": "LifeOS \\| NATIVE MODE|\u2550\u2550\u2550 LifeOS \u2550\u2550\u2550"
+      },
+      "models_allowlist": [
+        "sonnet-5",
+        "gpt-5.6-terra"
+      ],
+      "note": "v6.0.5 still has three modes, but defines them ONLY in LIFEOS_SYSTEM_PROMPT.md \u2014 which is why loading it via --append-system-prompt-file is mandatory, not optional.",
+      "format_marker": "\u2550\u2550\u2550\u2550 LifeOS \\| NATIVE MODE|\u2550\u2550\u2550 LifeOS \u2550\u2550\u2550|\u267b"
     },
     {
       "id": "L7",
@@ -42,25 +69,74 @@
       "system_prompt": "LIFEOS/LIFEOS_SYSTEM_PROMPT.md",
       "algorithm_path": "LIFEOS/ALGORITHM",
       "publish_transcripts": true,
-      "routing_markers": { "heavy": null, "light": null },
-      "models_allowlist": ["sonnet-5", "gpt-5.6-terra", "fable-5", "haiku-4-5", "gpt-5.6-luna", "gpt-5.6-sol", "opus-5", "opus-4-8"],
-      "note": "v7.28.3 retired modes outright ('One format, every response — there are no modes'). Banner markers are null by fact, not by omission; routing is measured behaviourally via code:algorithm_read."
+      "routing_markers": {
+        "heavy": null,
+        "light": null
+      },
+      "models_allowlist": [
+        "sonnet-5",
+        "gpt-5.6-terra",
+        "fable-5",
+        "haiku-4-5",
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "opus-5",
+        "opus-4-8"
+      ],
+      "note": "v7.28.3 retired modes outright ('One format, every response \u2014 there are no modes'). Banner markers are null by fact, not by omission; routing is measured behaviourally via code:algorithm_read.",
+      "format_marker": "\u2550\u2550\u2550\u2550 LifeOS \u2550\u2550\u2550"
     }
   ],
   "models": [
-    { "id": "sonnet-5", "cli_arg": "claude-sonnet-5" },
-    { "id": "fable-5", "cli_arg": "claude-fable-5" },
-    { "id": "haiku-4-5", "cli_arg": "claude-haiku-4-5-20251001" },
-    { "id": "opus-5", "cli_arg": "claude-opus-5" },
-    { "id": "opus-4-8", "cli_arg": "claude-opus-4-8" },
-    { "id": "gpt-5.6-terra", "cli_arg": "gpt-5.6-terra", "engine": "claudex" },
-    { "id": "gpt-5.6-luna", "cli_arg": "gpt-5.6-luna", "engine": "claudex" },
-    { "id": "gpt-5.6-sol", "cli_arg": "gpt-5.6-sol", "engine": "claudex" }
+    {
+      "id": "sonnet-5",
+      "cli_arg": "claude-sonnet-5"
+    },
+    {
+      "id": "fable-5",
+      "cli_arg": "claude-fable-5"
+    },
+    {
+      "id": "haiku-4-5",
+      "cli_arg": "claude-haiku-4-5-20251001"
+    },
+    {
+      "id": "opus-5",
+      "cli_arg": "claude-opus-5"
+    },
+    {
+      "id": "opus-4-8",
+      "cli_arg": "claude-opus-4-8"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "cli_arg": "gpt-5.6-terra",
+      "engine": "claudex"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "cli_arg": "gpt-5.6-luna",
+      "engine": "claudex"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "cli_arg": "gpt-5.6-sol",
+      "engine": "claudex"
+    }
   ],
   "gpt_models": [],
-  "trials": { "T1": 1, "T2": 1, "T3": 2, "T4": 2, "T5": 2 },
+  "trials": {
+    "T1": 1,
+    "T2": 1,
+    "T3": 2,
+    "T4": 2,
+    "T5": 2
+  },
   "tier_models": {
-    "T5": ["sonnet-5", "gpt-5.6-terra"]
+    "T5": [
+      "sonnet-5",
+      "gpt-5.6-terra"
+    ]
   },
   "tier_models_note": "T5 (personalization) runs on the two bisect models only. Grounding is a property of the scaffold, not of model tier, so paying for it across eight models buys little.",
   "expected_runs": 560,
@@ -72,9 +148,10 @@
     "isolation": "HOME redirected to sandboxes/_home/<VERSION> (fidelity) + sandbox-exec seatbelt denying the operator home (safety) + LeakCheck marking escapes contaminated (validity)"
   },
   "claudex": {
-    "note": "GPT through the SAME CC harness via claudex (ChatGPT-auth wrapper) so hooks fire identically — this isolates prompts-vs-plumbing.",
+    "note": "GPT through the SAME CC harness via claudex (ChatGPT-auth wrapper) so hooks fire identically \u2014 this isolates prompts-vs-plumbing.",
     "engine": "claudex",
     "sol_concurrency": 1,
     "blocked_on": "claudex ChatGPT sign-in (attended)"
-  }
+  },
+  "format_marker_note": "Each version's own documented first-line output contract. RAW has none. This is deliberately NOT the routing metric: v7.28.3 has a format contract and no modes, so conflating them is what scored it 0% for a feature it removed on purpose."
 }
