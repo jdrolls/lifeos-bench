@@ -98,10 +98,63 @@ Smoke `t5-focus` on FORK × fable first. Then fleet → judge → report. `Repor
 
 ---
 
-## Phase 4c — Backlog (not scheduled)
+## Phase 4c — Opus lanes: Opus 5 and Opus 4.8
 
-- Opus 5 lane · 5-trial re-runs on cells within one trial of a boundary · a T6 "hard" tier
-  (multi-constraint builds) to break the frontier-model 100% ceiling · post results to #1715.
+**Question answered:** the original request named Opus 5 and Opus 4.8 explicitly; neither has a
+lane. Opus 5 fills the frontier/mid boundary of the inverted-U curve; Opus 4.8 tests whether the
+previous-generation frontier behaves like current-frontier (scaffold-indifferent) or mid-tier
+(scaffold-helped) — directly relevant to "it worked better on older models" anecdotes.
+
+### Build steps
+1. **Verify exact model ids first** — do not guess. Check with `claude --model claude-opus-5 -p "hi"`
+   (expect success) and query the CLI's model listing for the Opus 4.8 id (likely `claude-opus-4-8`
+   or a dated variant). A wrong id fails fast and cheap; confirm both before config edits.
+2. Add both to `bench.config.json` `models` (no `engine` field — native Claude lanes; they use the
+   same `sandboxes/_auth/oauth-token`). All three scaffolds apply: RAW / L7 / FORK.
+3. Recompute `expected_runs`: +3 scaffolds × 2 models × 24 = **+144**.
+
+### Run steps
+Smoke one cell per model (`RAW × opus-5 × t1-fact`), then fleet (resume-safe), judge (+42 rows),
+report. **Run on golden set v1.0.0 — i.e., before Phase 4b's golden-set bump.**
+
+### Execution order for all of Phase 4
+**4a (bisect) → 4c (opus) → 4b (T5 personalization).** 4a and 4c must complete on golden set
+v1.0.0 so every version/model lane shares the identical frozen prompt set; 4b bumps the golden set
+to v1.1.0 (append-only) and runs last. Total new runs: 96 + 144 + ~72–104 ≈ **310–345**.
+
+---
+
+## Phase 5 — Hardening (summary; future agent writes the full plan)
+
+Goal: make every headline number publication-grade before anyone outside sees it.
+
+- **5-trial confirmation re-runs** on every cell a headline claim rests on: L7 × Sonnet routing 0%,
+  the Haiku scaffold-degradation cells, FORK × GPT 100% lanes, and whatever Phase 4 elevates to
+  headline status. Bump `trials` selectively (config change per-cell or a `--trials` override),
+  re-run, report pass@5 / pass^5. (~60–100 targeted runs.)
+- **Conditional bisect narrowing:** only if 4a shows a cliff between v6.0.5 and v7.28.3, add lanes
+  for intermediate v7.x tags to find the exact regressing release. Scope to routing + the
+  discriminating tiers, Sonnet only, to keep it cheap.
+- **T6 "hard" tier (optional):** multi-constraint build tasks to break the frontier 100% ceiling —
+  only needed if publication reviewers push back on ceiling effects.
+- **Grader audit pass:** re-verify every grader's failure detail on a sample of passing AND failing
+  cells (the Phase 1–3 pattern was: when a number surprises, audit the grader first).
+
+## Phase 6 — Shipping (summary; future agent writes the full plan)
+
+Goal: turn the study into public evidence and a permanent instrument.
+
+- **The #1715 post:** a write-up of methods + findings with the repo link, framed as the
+  reproducible bisect evidence the maintainer asked for. Owner reviews before posting. Share the
+  HTML report artifact alongside.
+- **Upstream bug reports:** the v7.28.3 macOS file case-collision (`ISAReconcile.ts`/`IsaReconcile.ts`);
+  the Sonnet-5 routing-zero finding as a reproducible issue with per-cell transcripts.
+- **Standing regression suite:** convert the bench into an instrument — a scheduled job that runs
+  the frozen golden set against (a) each new LifeOS release tag and (b) each new model id, appends
+  to results, regenerates the report, and alerts on regression deltas. This is the end-state the
+  whole project points at: not a one-time study, a tripwire.
+- **Repo polish for outside users:** README quickstart for third parties reproducing on their own
+  scaffold/fork (their own `--fork-src`), containment-scrub docs, and a CONTRIBUTING note.
 
 ## Launch checklist for the fresh session
 
