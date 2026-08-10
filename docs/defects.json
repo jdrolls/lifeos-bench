@@ -1,0 +1,95 @@
+{
+  "note": "Harness and grader defects found and fixed while building this benchmark, each with a regression test. Listed because a benchmark's credibility rests on how its own errors were caught, not on the absence of errors. Source of truth for the table in README.md and in the generated report page.",
+  "defects": [
+    {
+      "id": 1,
+      "defect": "L6/L7 staged with zero hooks",
+      "effect": "Their enforcement layer never ran; format compliance scored 0%"
+    },
+    {
+      "id": 2,
+      "defect": "Config root not nested under $HOME",
+      "effect": "Upstream relative imports crashed the format-enforcing hook"
+    },
+    {
+      "id": 3,
+      "defect": "Inherited PATH carried operator paths",
+      "effect": "Clean cells were marked contaminated on an environment dump"
+    },
+    {
+      "id": 4,
+      "defect": "Real OAuth credentials reachable in-sandbox",
+      "effect": "Credential exposure in cells running with permissions bypassed"
+    },
+    {
+      "id": 5,
+      "defect": "LeakCheck patterns unanchored",
+      "effect": "Scaffold documentation scored as a sandbox escape"
+    },
+    {
+      "id": 6,
+      "defect": "workspace_diff_count counted hook state",
+      "effect": "Penalised only versions WITH hooks — silently favoured the control"
+    },
+    {
+      "id": 7,
+      "defect": "Claude-side judge not blinded",
+      "effect": "Graded synthetic-persona answers against the operator's real profile"
+    },
+    {
+      "id": 8,
+      "defect": "Judge prompt omitted the persona",
+      "effect": "T5 grounding judged against materials the judge could not see"
+    },
+    {
+      "id": 9,
+      "defect": "Fleet/Judge had no wave or vendor filter",
+      "effect": "A wave would have run 424 cells instead of 136; cross-vendor blinding was inexpressible"
+    },
+    {
+      "id": 10,
+      "defect": "Cells leaked browser processes",
+      "effect": "Orphaned browsers drove machine load to 13; inflated wall-clock and caused false timeouts"
+    },
+    {
+      "id": 11,
+      "defect": "LeakCheck counted a kernel refusal as an escape",
+      "effect": "Invalidated a cell whose boundary held, when a browser crash handler probed the operator profile and was denied"
+    },
+    {
+      "id": 12,
+      "defect": "Cell cwd inside the seatbelt's denied home",
+      "effect": "Emptied process.env for EVERY Bun hook, disabling the router and producing a routing result that was really a harness artifact"
+    },
+    {
+      "id": 13,
+      "defect": "No node_modules in any staged install",
+      "effect": "Hooks import a YAML parser from a dozen of their own files; Bun's auto-install cannot write a tempdir inside the seatbelt, so the hook layer still could not start after the cwd fix"
+    },
+    {
+      "id": 14,
+      "defect": "Staged install SHARED by every cell in a lane",
+      "effect": "Hooks wrote context-bearing state into the tree the next cell loads — cross-cell coupling, and a race at concurrency > 1"
+    },
+    {
+      "id": 15,
+      "defect": "Hook-state capture copied vendored plugin docs",
+      "effect": "A bundled doc quoting an example home path landed in the graded artifact directory, where LeakCheck correctly read it as an escape and marked a clean cell contaminated"
+    },
+    {
+      "id": 16,
+      "defect": "A skipped grader counted as a task failure",
+      "effect": "The golden set skips checks that cannot apply to a version — the control structurally cannot know the persona — so a documented exemption became a failure. Penalised only the control"
+    },
+    {
+      "id": 17,
+      "defect": "Prompts a lane never ran counted against it",
+      "effect": "tier_models restricts T5 to two models, but pass@k divided by all 21 prompts regardless, so six of eight model lanes were graded on five prompts they were never scheduled to run. Understated every restricted lane by up to 23.8 points and produced the retracted claim that no model passes 100% bare"
+    },
+    {
+      "id": 18,
+      "defect": "Retired-lane artifacts left inside the scanned results tree",
+      "effect": "The retired private-fork lane's cells still sat in results/, and they legitimately contain real identity, so a full containment scan reported 101 violating files with zero in any live cell — a gate whose exit code no longer distinguished a sandbox escape from a retired lane's own content. Fixed by quarantining those trees, NOT by exempting them from the scanner"
+    }
+  ]
+}

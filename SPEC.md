@@ -1,86 +1,150 @@
-# lifeos-bench — Build Spec (Phase 0 harness)
+# lifeos-bench — Harness Spec
 
-You are building the execution harness for an AI-scaffolding benchmark. The golden set
-(`goldenset/goldenset.json`) and matrix (`bench.config.json`) are FROZEN inputs — read them,
-never modify them. All code is TypeScript on Bun. No npm/npx — bun/bunx only.
+What the harness does **now**. This file began as the Phase 0 build spec ("write these six
+tools"); it is kept as the description of the built system, because a build spec that still
+describes an intended harness after the harness exists is a trap for the next reader. The
+Phase 0 deliverable list is in git history.
 
-## Deliverables
+All code is TypeScript on Bun. **bun/bunx only — never npm/npx.**
 
-### 1. `tools/StageVersion.ts`
-Stages a scaffolding version into `sandboxes/<VERSION_ID>/`:
-- `RAW`: create empty config dir with minimal settings.json (no CLAUDE.md, no hooks).
-- `L7` (upstream): copy from `vendor/LifeOS/` checkout (already cloned at the right tag by the
-  orchestrator) into the sandbox config-dir layout the version expects. Overlay synthetic user
-  files from `fixtures/_synthetic-user/` (create these: a fake TELOS.md, fake identity files
-  matching upstream's documented USER/ shape — invented person "Alex Doe", no real data).
-- `FORK`: **retired from the published matrix.** The staging path remains available behind
-  `--fork-src` for local experiments, but no fork lane is benchmarked or reported.
-- Containment scrub gate: refuse to stage if the result contains any operator-identity
-  token. The token list is the single source of truth in `tools/LeakCheck.ts`, assembled
-  from fragments at runtime — do NOT restate the literals in documentation, or the docs
-  become the leak the gate exists to prevent.
-- Idempotent; `--force` re-stages.
+`goldenset/goldenset.json` and `bench.config.json` are **frozen inputs**. Read them; changing
+either breaks comparability with every recorded run, which is a golden-set version bump, not
+an edit.
 
-### 2. `tools/RunCell.ts`
-Runs one (version, model, prompt, trial):
-- Creates a fresh workspace: copies `fixtures/<fixture>/` if the prompt has one, else empty dir.
-- Launches headless: `claude -p "<prompt>" --model <cli_arg> --output-format stream-json` with
-  `CLAUDE_CONFIG_DIR=<sandbox>`, cwd=workspace, **detached via setsid**, env scrubbed:
-  delete `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDECODE`. Never pass `--bare`.
-- Captures: full stream-json transcript, final message, exit code, wall-clock, token usage
-  (from the result event), and the post-run workspace state.
-- Writes `results/phase1/<VERSION>/<model>/<prompt-id>/trial-<n>/{transcript.jsonl,meta.json,workspace-diff.txt}`.
-- Timeout from config; on timeout record `status: "timeout"`, never retry silently.
+---
 
-### 3. `tools/Grade.ts`
-Implements the code graders referenced in the golden set:
-`regex`, `file_contains`, `file_not_contains`, `file_exists`, `file_exists_any`, `file_unchanged`,
-`workspace_diff_count`, `max_tool_calls`, `token_budget`, `command_exit0`, `command_output`,
-`command_output_matches_fixture`, `transcript_contains_command` (with `before_first_edit` support),
-and `routing` (match the version's `routing_markers` from bench.config.json against the transcript;
-emit `skipped` for RAW where markers are null).
-Judge graders (`judge:rubric`) are STUBS here: emit `{status:"pending_judge"}` rows — the
-orchestrator runs cross-vendor judges separately. Write per-trial grade rows to
-`results/phase1/grades.jsonl` (one JSON object per grader per trial: run id fields, grader name,
-pass/fail/skipped/pending, detail).
+## 1. What a run is
 
-### 4. `tools/Fleet.ts`
-Reads both config files, enumerates Phase-1 cells honoring per-tier trial counts, runs them with
-config concurrency, resumable (skips cells whose meta.json shows success), `--dry-run` prints the
-plan (must print `144 runs` for current config), `--limit N` for smoke tests. Progress to stdout
-as one JSON line per completed run.
+One **cell** is one `(version, model, prompt, trial)`. The matrix is:
 
-### 5. `tools/Report.ts`
-Aggregates `grades.jsonl` → `results/phase1/REPORT.md`: per version×model table with routing-correct %,
-task pass-rate (pass@k and pass^k where trials>1), mean tokens, mean wall-clock; per-tier breakdown;
-and a "cells needing judge" list.
+| Axis | Values |
+|---|---|
+| Version | `RAW` (bare control) · `L5` (PAI v5.0.0) · `L6` (LifeOS v6.0.5) · `L7` (LifeOS v7.28.3) |
+| Model | sonnet-5 · fable-5 · haiku-4-5 · opus-5 · opus-4-8 · gpt-5.6 terra / luna / sol |
+| Prompt | 21 frozen prompts, tiers T1–T5 (golden set 2.0.0) |
+| Trials | T1 1 · T2 1 · T3 2 · T4 2 · T5 2 |
 
-### 6. Fixtures (`fixtures/`)
-Build every fixture named in the golden set, each a tiny self-contained bun project where relevant:
-- `t1-edit`: notes/todo.md containing a 3-item list including "buy milk".
-- `t2-bugfix`: src/paginate.ts with an off-by-one (last page dropped) + src/paginate.test.ts that
-  fails against the bug and passes when fixed.
-- `t2-script`: docs/ with 3 .md files totaling exactly 247 lines.
-- `t2-csv`: data/sales.csv, 12 months, March highest with total 48720.
-- `t3-build`: bare bun project (package.json, tsconfig) with empty src/ and a README naming the task.
-- `t3-debug`: three modules (src/queue.ts, src/worker.ts, src/scheduler.ts) where worker consumes
-  a queue the scheduler mutates during iteration — deterministic failing test included; smallest
-  correct fix is one module.
-- `t3-refactor`: src/report.ts (~80 lines, interleaved IO+logic), data input file, one green test,
-  expected_output.txt with the exact current stdout.
-- `t3-plan`: small JSON-file-storage app (2 modules + data/store.json).
-- `t4-casual-complex`: data/metrics.json with a dozen plausible metrics.
-- `t4-ambiguous`: bun project with one failing test (clear bug in src/, e.g. wrong comparator).
-- `t4-multi`: bun project named "foldx" — name appears in package.json, README.md, 2 source files,
-  and a string constant; includes a green test that doesn't depend on the name.
-- `_synthetic-user/`: the fake "Alex Doe" user files described above.
-Every fixture with tests must fail/pass exactly as the golden set expects — verify each one
-yourself with `bun test` / the golden-set command before finishing.
+`models_allowlist` (per version) and `tier_models` (per tier) restrict lanes so the version
+bisect does not pay for the full model sweep. `expected_runs` is 560.
 
-## Acceptance (verify before you finish, report evidence)
-1. `bun tools/Fleet.ts --dry-run` prints a 144-run plan.
-2. `bun tools/StageVersion.ts RAW` produces a working sandbox.
-3. Every fixture's baseline state matches its golden-set expectations (failing tests fail,
-   line counts exact, csv totals exact). Show command output.
-4. `bun test` in the repo root passes (write unit tests for Grade.ts graders at minimum).
-5. Zero references to real personal data anywhere under fixtures/ or tools/.
+GPT models run through the **same** Claude Code harness via a local ChatGPT-auth proxy, so
+hooks fire identically. That is what isolates *prompts* from *plumbing*: a GPT lane and a
+Claude lane differ in the model, not in the harness around it.
+
+---
+
+## 2. Isolation model
+
+Four mechanisms, solving four different problems. All of them are in `tools/Sandbox.ts`.
+
+| Concern | Mechanism |
+|---|---|
+| **Fidelity** | `$HOME` is redirected, and the staged config root sits *physically* at `<HOME>/.claude` — upstream imports traverse `../../../.claude/...`, which bypasses `HOME` resolution, so a sibling directory or a symlink is not equivalent |
+| **Independence** | `sandboxes/_home/<VERSION>` is a **template**. Every cell clones it (`prepareCellHome`, `cp -Rc`, an APFS clone: ~0.5s for 26MB, no extra disk) into its own `$HOME` |
+| **Safety** | a `sandbox-exec` seatbelt denies the operator's home outright, re-allowing only the read-only toolchain and the cell's own directories; the child environment is scrubbed of operator paths and ephemeral session shims |
+| **Validity** | `tools/LeakCheck.ts` marks any escape `contaminated`; a dirty fleet does **not** get a report |
+
+Two placement rules are load-bearing rather than tidy, and both were learned the hard way:
+
+- **The cell's cwd lives outside the operator home** (`runWorkspace`, under `$TMPDIR`). Under
+  the seatbelt, a Bun process whose cwd sits inside the denied subtree starts with a
+  *completely empty* `process.env` — Bun reads something under the home at startup, the read
+  is refused, and it yields an empty environment instead of failing. Every scaffold hook is
+  `#!/usr/bin/env bun`, so with no `PATH` the entire hook layer was dead. The workspace is
+  copied back beside its artifacts after the run.
+- **The staged template is never re-allowed by the seatbelt.** Because each cell clones it,
+  nothing inside a cell has any reason to write there, so leaving it under the blanket home
+  deny makes "cells must not mutate the staged install" kernel-enforced rather than assumed.
+
+**Nothing credential-bearing is placed in a sandbox.** Cells authenticate from an OAuth token
+held outside every sandbox. The direct consequence is that a scaffold hook which spawns a
+nested `claude` cannot authenticate — Claude Code passes no auth variable to hook subprocesses
+— so hook-based LLM routing is **structurally unmeasurable by this method**. That is a stated
+limitation of the benchmark, not a defect queued for repair.
+
+**Persona.** `fixtures/_persona/blocks/` is the single source; `StagePersona.ts` renders it
+byte-identically into all three install layouts. The persona is disjoint from the operator by
+construction, which makes the operator's own identifiers a continuous tripwire.
+
+---
+
+## 3. Tools
+
+| Tool | Contract |
+|---|---|
+| `StageVersion.ts` | Stages a version into `sandboxes/_home/<ID>/.claude`. `RAW` gets an empty config (no `CLAUDE.md`, no hooks). Upstream versions are copied from their `vendor/` checkout, have the persona overlaid, run their **own** `ActivateImports.ts`, and get `node_modules` installed (`installDependencies`) — hooks import `yaml` from a dozen of their own files, and Bun's auto-install cannot write a tempdir inside the seatbelt. Refuses to stage if the result contains an operator-identity token. Idempotent; `--force` re-stages. |
+| `RunCell.ts` | Runs one cell headless: `claude -p <prompt> --model <cli_arg> --output-format stream-json`, `--append-system-prompt-file` from the version's `system_prompt` (a missing file is a hard error), `CLAUDE_CONFIG_DIR` at the cell's cloned config root, cwd the cell workspace, given its own process group (`detached: true` — macOS ships no `setsid`) so a timeout kills the whole tree, `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDECODE` scrubbed, never `--bare`. Timeout from config; a timeout is recorded as `status: "timeout"` and never silently retried. |
+| `Grade.ts` | The code graders (see §4). Judge expectations emit `{status:"pending_judge"}` rows for the separate judging pass. |
+| `Judge.ts` | Renders each pending rubric into a blinded prompt and runs it through `JUDGE_CMD`. `scrubResponse` strips framework banner lines before the judge sees anything. T5 judgments are supplied the persona as ground truth. Resumable: a re-run judges only rows with no verdict. |
+| `Fleet.ts` | Enumerates the matrix, runs cells at `runner.concurrency`, resumable (skips cells whose `meta.json` says `success`, retries anything else), `--dry-run` prints the plan, `--versions` / `--models` / `--limit` select a wave. |
+| `LeakCheck.ts` | Containment gate. Escape patterns and operator-identity tokens, assembled at runtime from fragments so the tool is not itself the leak. |
+| `Aggregate.ts` | The single metric implementation. Every reporting surface reads it. |
+| `Report.ts` | `results/phase1/REPORT.md` — version × model, per-tier breakdown, standing limitations, cells still needing a judge. |
+| `BuildReportPage.ts` | `docs/report-data.json` (aggregate dataset) and `docs/report.html` (self-contained page). |
+
+---
+
+## 4. Grading
+
+Three columns, deliberately separate:
+
+1. **Routing** — `code:algorithm_read`: did the scaffold read its Algorithm before substantial
+   work? Version-neutral, because v7.28.3 retired modes and banner-grepping cannot compare
+   versions that disagree about whether modes exist.
+2. **Format compliance** — `code:format_compliance`, its own column. A version can honour its
+   output contract and have no modes at all; averaging the two together is exactly what
+   produced a retracted headline.
+3. **Task pass-rate** — everything else, as pass@k and pass^k across trials.
+
+Code graders: `regex`, `file_contains`, `file_not_contains`, `file_exists`, `file_exists_any`,
+`file_unchanged`, `workspace_diff_count`, `max_tool_calls`, `token_budget`, `command_exit`,
+`command_output`, `command_output_matches_fixture`, `transcript_contains_command` (with
+`before_first_edit`), `routing`, `algorithm_read`, `format_compliance`.
+
+**Status semantics.** `pass` / `fail` / `skipped` / `pending_judge`. `skipped` means *this
+check does not apply to this version* — the control structurally cannot know the persona, so
+its T5 grounding checks skip. A skipped row is excluded from every numerator and denominator;
+it is never counted as a failure. `workspace_diff_count` excludes scaffold hook state for the
+same reason: counting it could penalise only versions that *have* hooks.
+
+**Judges are blinded and cross-vendor.** Claude-family cells are judged by GPT, GPT cells by a
+Claude judge run with an empty config and a neutral cwd — both load-bearing, because Claude
+Code derives context from `HOME` *and* from the working directory, and an unisolated judge
+grades synthetic-persona answers against the operator's real profile. Nothing self-grades.
+
+---
+
+## 5. Per-cell artifacts
+
+`results/phase1/<VERSION>/<model>/<prompt-id>/trial-<n>/`:
+
+| File | Contents |
+|---|---|
+| `transcript.jsonl` | the full stream-json transcript |
+| `meta.json` | status, exit code, wall-clock, token usage, cost, final message, the exact argv, the resolved isolation paths, and `hook_state` |
+| `workspace/`, `baseline/`, `workspace-diff.txt` | the post-run workspace, its starting state, and the diff |
+| `sandbox.sb` | the seatbelt profile this cell actually ran under |
+| `home-writes.txt` | every scaffold path the run wrote into its `$HOME` — the cheap answer to "did the enforcement layer run at all" |
+| `home-state/` | those files copied back, because that is where a hook records its decision (`format-gate.jsonl` carries a literal pass/fail; `ratings.jsonl` carries a nested-inference failure verbatim) |
+
+Claude Code's own housekeeping is **excluded** from the hook-state capture, not merely
+uncopied: it is not scaffold behaviour, it is ~445 plugin files refreshed per cell, and one
+of those vendored docs quotes an example home path that `LeakCheck` correctly reads as an
+escape. v6 and v5 resolve `LIFEOS_DIR="$HOME/…"` literally and land a `$HOME/` directory in
+the cwd; v7 patched that expansion and writes to the real home. Both are the same behaviour
+and are counted as one.
+
+---
+
+## 6. Acceptance
+
+Run these; report the evidence, not the intention.
+
+1. `bun test` — all pass.
+2. `bun tools/Fleet.ts --dry-run | wc -l` — prints `560`.
+3. `bun tools/StageVersion.ts <ID> --force` — produces a sandbox whose `~/.claude/CLAUDE.md`
+   probe returns that version's own banner.
+4. Every fixture's baseline matches its golden-set expectations (failing tests fail, line
+   counts exact, CSV totals exact).
+5. `bun tools/LeakCheck.ts --root results` — exits 0.
+6. Zero references to real personal data anywhere under `fixtures/`, `tools/`, or `docs/`.

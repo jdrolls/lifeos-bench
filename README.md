@@ -4,11 +4,18 @@ Reproducible A/B benchmark for AI scaffolding frameworks — built in response t
 [LifeOS discussion #1715](https://github.com/danielmiessler/LifeOS/discussions/1715):
 *does the scaffolding actually improve outcomes, on which models, at what token cost?*
 
+A rendered walkthrough of the whole study — method, charts, corrections, limitations — is at
+[`docs/report.html`](docs/report.html), generated from [`docs/report-data.json`](docs/report-data.json)
+by `bun tools/BuildReportPage.ts`.
+
 > **Phases 1–3 (432 runs) are retracted.** Three independent faults invalidated them: cells
 > escaped their sandbox and read the operator's live install, the upstream lanes were staged
 > without their constitutional system prompt, and the routing metric grepped for a feature v7
-> had deliberately removed. The correction is documented in [`PHASE_PLAN.md`](PHASE_PLAN.md);
-> the retracted headlines are preserved in git history, not here.
+> had deliberately removed.
+>
+> **Phase 4's scaffolded numbers are superseded too** — every L5/L6/L7 cell in that run had its
+> hook layer silently disabled. Both corrections are documented in [`PHASE_PLAN.md`](PHASE_PLAN.md);
+> the retracted headlines live in git history, not here.
 
 ## What it measures
 
@@ -28,13 +35,17 @@ Per cell we grade, deterministically where possible:
    contract and have no modes at all; conflating the two produced a retracted headline.
 3. **Task pass-rate** — checkable expectations (tests pass, exact outputs, files changed or
    unchanged), pass@k / pass^k across trials.
-4. **Overhead** — output tokens and wall-clock per cell.
+4. **Overhead** — output tokens, wall-clock and cost per cell.
 5. **Quality floor** — LLM-judge rubrics for non-checkable outputs, judged **cross-vendor**:
    Claude-family cells judged by GPT, GPT-family cells by a blinded Claude. Nothing self-grades.
 
+`tier_models` restricts the personalization tier to the two bisect models, so **six of the eight
+model lanes were scheduled for 16 prompts and two for 21.** Pass-rates are computed against the
+prompts a lane actually ran; compare a lane only against the same model's other lane.
+
 ## Isolation
 
-Three mechanisms, because they solve different problems:
+Four mechanisms, because they solve different problems:
 
 | Concern | Mechanism |
 |---|---|
@@ -59,7 +70,8 @@ sandbox; cells authenticate from an OAuth token held outside every sandbox.
 goldenset/        frozen prompts + expectations + judge rubrics
 bench.config.json matrix, trials, per-version markers
 fixtures/         per-prompt starting workspaces + the synthetic persona
-tools/            StageVersion / RunCell / Grade / Judge / Fleet / LeakCheck / Report
+tools/            StageVersion / RunCell / Grade / Judge / Fleet / LeakCheck / Aggregate / Report / BuildReportPage
+docs/             report page, its aggregate dataset, authored narrative, defect list (tracked)
 results/          transcripts + grades + REPORT.md (gitignored pending publication review)
 vendor/           upstream checkouts (gitignored)
 sandboxes/        staged installs (gitignored)
@@ -69,7 +81,7 @@ _archive/         retired and pre-fix artifacts (gitignored)
 ## Running
 
 ```bash
-bun test                                   # 57 tests, 0 failures
+bun test                                   # 103 tests, 0 failures
 bun tools/StageVersion.ts L5 --force       # and L6, L7, RAW
 bun tools/Fleet.ts --dry-run | wc -l       # 560 = the full matrix
 
@@ -83,103 +95,127 @@ JUDGE_CMD='bun <CodexExec> --model gpt-5.6-terra --prompt-file {promptfile}' \
   bun tools/Judge.ts --model sonnet-5,fable-5,haiku-4-5,opus-5,opus-4-8
 JUDGE_CMD='bash tools/claude-judge.sh {promptfile}' \
   bun tools/Judge.ts --model gpt-5.6-terra,gpt-5.6-luna,gpt-5.6-sol
-bun tools/Report.ts
+
+bun tools/Report.ts            # results/phase1/REPORT.md
+bun tools/BuildReportPage.ts   # docs/report-data.json + docs/report.html
+bun tools/LeakCheck.ts --root results   # must exit 0
 ```
 
-Claudex lanes additionally need CLIProxyAPI up on `:8317` and signed in.
+Claudex lanes additionally need CLIProxyAPI up on `:8317` and signed in. Judging is resumable —
+re-running the same command judges only rows that still have no verdict.
 
 ## Status
 
-**Phase 4 ran to completion — 560/560 cells, 559 `success`, containment clean, zero pending
-judges — but its scaffolded lanes must be re-run.** Full numbers:
-[`results/phase1/REPORT.md`](results/phase1/REPORT.md). The one failure is
-`RAW/opus-5/t4-casual-complex/trial-2`, a reproducible 1200s timeout recorded as such rather than
-rescued by raising the ceiling.
+**Complete and judged.** 560 cells, 559 `success`, containment clean (`18827` files scanned, 0
+violations; and 0 for each live lane scanned on its own: RAW 5051, L5 3338, L6 2137, L7 8293
+files), 220 rubric verdicts with zero judge errors and zero rows left unjudged. Every
+scaffolded cell ran with a working hook layer, evidenced per cell: L5 24.0, L6 21.8 and L7 25.4
+hook-state files written per cell on average, against RAW's zero. Total recorded cost $359.37
+across 17.1 hours of cell wall-clock.
 
-> **Every scaffolded lane ran with its hook layer disabled** (found 2026-08-10). The seatbelt's
-> home read-deny emptied `process.env` for any Bun process whose cwd sat inside the operator home,
-> and every scaffold hook is `#!/usr/bin/env bun`. Cells recording hook failures: **L5 66/68,
-> L6 67/68, L7 210/212 — RAW 0/212**, because RAW registers no hooks. So Phase 4 measured the
-> *prompt-and-context* half of each scaffold (system prompt, `CLAUDE.md`, imports — all CLI flags
-> and file reads, all working) with the *enforcement* half switched off. For a framework whose
-> founding principles include "code before prompts", that understates it. L5/L6/L7 are being
-> re-run; RAW-only figures are unaffected.
+The single failure is `RAW/opus-5/t4-casual-complex/trial-2`, a reproducible 1200s timeout (it
+failed twice, the second time on an idle machine) recorded as such rather than rescued by raising
+the ceiling. Full tables: [`results/phase1/REPORT.md`](results/phase1/REPORT.md) and
+[`docs/report.html`](docs/report.html).
 
-> **Turning the hooks on took three fixes, not one, and the first two each hid the next.**
-> (1) the cwd/`process.env` fault above (`Sandbox.runWorkspace`); (2) no `node_modules` in any
-> staged install, so hooks importing `yaml` died on `bun is unable to write files to tempdir`
-> (`StageVersion.installDependencies`); (3) with hooks finally running, they wrote their state back
-> into the **shared** staged install — L7 put 29 files there per cell, v5 rewrote the staged
-> `settings.json` itself — making each cell depend on the one before it. Every cell now clones its
-> own `$HOME` (`Sandbox.prepareCellHome`). Nothing before fix 3 is a valid scaffolded measurement.
->
-> **RAW's Phase 4 figures survive fix 3**, on the argument that a version registering no hooks has
-> nothing that writes to `$HOME` at runtime: what the shared home accumulated for RAW was Claude
-> Code's own bookkeeping (`.claude.json`, per-cwd `projects/` session logs, telemetry caches), and
-> each cell already had a unique cwd, so no session was ever resumed into another cell. The
-> scaffolded lanes had no such argument — their hooks demonstrably wrote context-bearing state.
+### Findings
 
-Findings — (1) and (3) span all eight models; (2) is the version bisect, which runs on the two
-bisect models by design:
+**1. On general tasks the scaffolding does not help.** Across T1–T4, on the two models every
+version ran:
 
-1. **The scaffolding helps or is neutral on seven of eight models.** RAW vs L7, pass@k:
-   sonnet-5 **+19.0**, opus-4-8 **+9.5**, haiku-4-5 **+4.7**, and 0.0 on fable-5, opus-5, terra,
-   luna and sol. On pass^k only fable-5 declines (−4.8, a single prompt).
-2. **Version comparison (2 bisect models).** L5 leads on task pass@k (100%) but spends 7.7k–8.5k
-   output tokens per cell; L6/L7 reach 95%/95% for 2.0k–3.8k. Format compliance improves
-   monotonically: L5 80% → L6 100% → L7 100%.
-3. **Both retracted Phase 1–3 headlines fail on corrected data.** No model passes 100% bare — RAW
-   spans 66.7–85.7% — so the ceiling that made scaffolding look pointless was an artifact of the
-   old prompt set. And "small models get worse under scaffolding" does not reproduce: Haiku 4.5
-   *gains* (+4.7 pass@k, +9.6 pass^k), paying its cost in format compliance (66.7% vs 100%
-   elsewhere) rather than in task success. The curve is diminishing returns toward current
-   frontier, not an inverted U.
+| Version | T1–T4 pass@k | T1–T4 pass^k | Mean output tokens/cell |
+|---|---:|---:|---:|
+| RAW | **96.9%** | 93.8% | 2.8k |
+| L5 | 96.9% | 90.6% | 10.9k |
+| L6 | 93.8% | 93.8% | 2.0k |
+| L7 | 90.6% | 87.5% | 2.9k |
+
+The six-model sweep agrees with more samples: RAW 95.8% vs L7 93.8% pass@k on T1–T4. The spread
+is inside what one or two trials can resolve — but it is not a gain, and the direction is
+consistent.
+
+**2. On personalization it is decisive.** T5, same two models:
+
+| Version | T5 pass@k | T5 pass^k |
+|---|---:|---:|
+| RAW | **40.0%** | 10.0% |
+| L5 | 100.0% | 60.0% |
+| L6 | 90.0% | 70.0% |
+| L7 | 90.0% | 60.0% |
+
+Large, consistent across all three versions and both models, and close to tautological — the
+control structurally cannot know the persona. What it establishes is that the delivery mechanism
+works: the profile reaches the model and changes the answer.
+
+**3. The bare control is stronger than previously published.** Four of eight models reach **100%
+pass@k with no scaffolding at all** (fable-5, opus-5, gpt-5.6-luna, gpt-5.6-sol, on the 16
+prompts those lanes ran). The earlier "no model passes 100% bare" was an artifact of grading six
+lanes on five prompts they were never scheduled to run — defect 17 below.
+
+**4. Newest version minus control, per model (pass@k):** sonnet-5 **+14.3**, opus-4-8 **+6.3**,
+fable-5 / haiku-4-5 / terra / luna 0.0, opus-5 **−6.2**, sol **−12.5**. It does not sort by model
+tier. One prompt is worth 4.8–6.3 points at these trial counts, so only the outer two are outside
+the noise band.
+
+**5. Cost is where the versions separate cleanly.** L5 spends ~10.9k output tokens per cell against
+L6's 2.0k and L7's 2.9k, for a task pass-rate inside the noise band — a 4–5× premium. Format
+compliance moves the other way and is where the newer versions genuinely improve: L5 70% → L6 100%
+→ L7 96.4%, the last dragged down entirely by Haiku 4.5 at 66.7%.
+
+**6. Routing measures instruction-following, not enforcement** — see limitations. Under L7 all
+three GPT lanes read the Algorithm 100% of the time and the Claude lanes 40–50%. The split is by
+vendor, not by version.
 
 ## Known limitations
 
 Read these before quoting any number.
 
-- **Routing was not measurable for L6 in the Phase 4 data**, and **L7 has no router to measure** —
-  v7.28.3 retired modes and registers no classifier hook at all. For L6 the earlier explanation
-  ("Claude Code spawns hooks with an empty environment") was **wrong**: a `/usr/bin/env` probe
-  registered as a real hook inside a real cell prints 121 variables. The actual cause was the
-  seatbelt — a Bun process whose cwd sat inside the denied operator home started with
-  `process.env` completely empty, so the router's `spawn('claude')` could not resolve a binary
-  that was on its PATH the whole time. Cells now run with a cwd outside that tree
-  (`Sandbox.runWorkspace`) and the router reaches its classifier. It then fails one layer later:
-  Claude Code passes no auth variable to hooks and the sandbox `HOME` holds no credentials by
-  design, so the nested `claude` cannot authenticate. So `algorithm_read` for L6 still measures
-  *unrouted* model behavior and must not be reported as a regression. L5 is unaffected: v5 routes
-  via prose in `CLAUDE.md`, which spawns nothing. Read correctly, the L7 routing column
-  (40% Claude / 100% GPT) is a finding about instruction-following without enforcement.
+- **Hook-based routing is structurally unmeasurable by this method, and L7 has no router to
+  measure.** Only v6 registers a classifier hook; v7.28.3 retired modes and ships none. v6's
+  router spawns a nested `claude`, Claude Code passes no auth variable to hook subprocesses, and
+  the sandbox `HOME` holds no credentials by design — so it reaches its classifier and fails
+  authentication. That is a deliberate isolation invariant, not a defect awaiting repair. L6's
+  `algorithm_read` therefore measures *unrouted* model behaviour and must not be reported as a
+  scaffold regression. L5 is unaffected: v5 routes via prose in `CLAUDE.md`, which spawns nothing.
+  That asymmetry is itself a result — prose routing survives an environment where hook-based
+  routing cannot run.
 - **Hooks that call an LLM cannot work in-sandbox, by choice.** v6's router and v5/v6/v7's
-  satisfaction-rating hooks spawn a nested `claude`. Claude Code passes no auth variable to hook
-  subprocesses and the sandbox `HOME` holds no credentials by design, so those hooks reach their
-  classifier and then fail authentication — visible verbatim in the captured state
-  (`ratings.jsonl`: `Inference failed: api error: claude JSON envelope is_error=true`). Deterministic
-  hooks are unaffected and do run; `format-gate.jsonl` records a real pass/fail per response.
+  satisfaction-rating hooks spawn a nested `claude`; the failure is visible verbatim in the
+  captured state (`ratings.jsonl`: `Inference failed: api error: claude JSON envelope is_error=true`).
+  Deterministic hooks are unaffected and do run; `format-gate.jsonl` records a real pass/fail per
+  response.
 - **A fresh install of v6/v7 reports its own memory hooks as missing.** `MemoryHealthCheck` treats
   `settings.system.json` as the source of truth, but upstream's `InstallHooks` merges
   `install/hooks/hooks.json` into `settings.json` only, and the shipped `install/settings.system.json`
-  registers none of the memory hooks. So every scaffolded cell carries a
+  registers none of the memory hooks. Every scaffolded cell therefore carries a
   `🩺 MEMORY HEALTH: CRITICAL … NOT registered` banner into its context and often into its answer.
-  That is upstream behaviour faithfully reproduced, not a staging error — the hooks themselves are
-  registered and do run — but it consumes context and shows up in graded output.
+  Upstream behaviour faithfully reproduced, not a staging error — but it consumes context and
+  shows up in graded output.
+- **Single- and double-trial cells are noisy.** One prompt is worth 4.8 points on a 21-prompt lane
+  and 6.3 on a 16-prompt lane. Format compliance has been observed varying run to run on an
+  identical lane.
+- **The judge bar is permissive, and demonstrably so.** `min_score` is 3 of 5. Scores are bimodal
+  (120 fives and 34 ones of 220), but all 35 threes are admitted — including at least one whose
+  own reasoning says the response "does not acknowledge the standing preference" the rubric asked
+  about. Raising the threshold to 4 would reclassify 16% of verdicts, larger than most version
+  differences here.
+- **Wall-clock is not comparable across runs** at `concurrency > 1`; cells contend for CPU. Token
+  counts, cost, routing, format and pass-rates are unaffected.
 - **RAW is bare of LifeOS, not of all scaffolding.** The control still has Claude Code's bundled
   skills; one cell was observed invoking `dataviz` to build its page.
-- **Single- and double-trial cells are noisy.** Format compliance has been observed varying run to
-  run on an identical lane. Headline claims need the Phase 5 five-trial confirmation.
-- **The judge bar is permissive.** `min_score` is 3 of 5 with ~68% of scores at 5, so task
-  pass-rate has weak power to separate versions.
-- **Wall-clock is not comparable across runs** at `concurrency > 1`; cells contend for CPU. Wave C
-  timings recorded before the process reaper landed are additionally contended by leaked browser
-  processes. Token counts, routing, format and pass-rates are unaffected.
+- **RAW's cells were retained, not re-run**, on the argument that a version registering no hooks
+  has nothing writing to `$HOME` at runtime, and every cell already had a unique cwd. If that
+  argument is ever doubted, the remedy is to re-run RAW's 212 cells, not to hedge the numbers.
+- **Cells can act on the host outside the seatbelt.** A cell that renders a page launches a browser
+  through the OS; leftover tabs pointing at cell workspaces were found in the operator's browser
+  session. Nothing flows back into the cell and containment scans clean, but "the cell cannot
+  affect the host" is not a claim this harness can make.
 
 ## Grader integrity
 
-Fifteen harness and grader defects were found and fixed while building this, each with a regression
-test. They are listed because a benchmark's credibility rests on how its own errors were caught,
-not on the absence of errors:
+Eighteen harness, grader and artifact-hygiene defects were found and fixed while building this, each with a
+regression test. The machine-readable list is [`docs/defects.json`](docs/defects.json), which is
+also what the report page renders.
 
 | Defect | Effect |
 |---|---|
@@ -198,9 +234,13 @@ not on the absence of errors:
 | No `node_modules` in any staged install | Hooks import `yaml` from 13–14 of their own files; Bun's auto-install cannot write a tempdir inside the seatbelt, so the hook layer still could not start after the cwd fix |
 | Staged install **shared** by every cell in a lane | Hooks wrote context-bearing state (`drift-reminder.json`, `work.json`, `session-names.json`, and v5's own `settings.json`) into the tree the next cell loads — cross-cell coupling, and a race under `concurrency > 1` |
 | Hook-state capture copied vendored plugin docs | A bundled doc quoting `/Users/alice/.claude` landed in the graded artifact directory, where `LeakCheck` correctly read it as an escape and marked a clean cell `contaminated` |
+| A **`skipped` grader counted as a task failure** | The golden set skips checks that cannot apply to a version — the control cannot know the persona — so a documented exemption became a penalty. Penalised only the control |
+| **Prompts a lane never ran counted against it** | `tier_models` restricts T5 to two models, but pass@k divided by all 21 prompts regardless, so six of eight lanes were graded on five prompts never sent to them. Understated every restricted lane by up to 23.8 points and produced the retracted "no model passes 100% bare" |
+| Retired-lane artifacts left inside the scanned tree | The retired private-fork lane's cells still sat in `results/` and legitimately contain real identity, so a full scan reported 101 violating files with **zero in any live cell** — a gate whose exit code no longer separated a sandbox escape from a retired lane's own content. Fixed by quarantining those trees under `_archive/`, **not** by exempting them from the scanner |
 
-Two are worth singling out. **`workspace_diff_count`** was one-directional — only versions *with*
-hooks could be penalised — so it biased the benchmark toward its own null hypothesis. It was
-caught by auditing a result that looked too clean: the bare control beating a scaffold 4/4 to 0/4.
-And **the unblinded judge** failed correct answers for citing the synthetic persona instead of the
-operator's real projects; the containment gate caught it, on the harness's own code.
+Four are worth singling out, because they share a shape. **`workspace_diff_count`**, **the skipped
+grader**, and **the unrun prompts** were all one-directional — each could only ever move the
+numbers one way, and two of the three moved them toward the benchmark's own null hypothesis. None
+was caught by a test; each was caught by asking why a figure looked wrong. And **the unblinded
+judge** failed correct answers for citing the synthetic persona instead of the operator's real
+projects — caught by the containment gate, running on the harness's own code.

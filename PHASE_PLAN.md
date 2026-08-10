@@ -133,7 +133,10 @@ Judges stay blinded and cross-vendor: Claude-family cells judged by GPT, GPT cel
 already covers `═══`, `LifeOS`, `♻`, and the `🗣️` closer, so v5/v6/v7 formats are all
 stripped. Re-check it if any version's banner changes.
 
-## Phase 4 scaffolded lanes are invalid — re-run required (found 2026-08-10)
+## Phase 4 scaffolded lanes were invalid — re-run DONE 2026-08-10 (found 2026-08-10)
+
+> Resolved. Kept in full because it is the study's central correction, not because it is pending.
+> The re-run's outcome is under **Final results** below; what follows is how the fault was found.
 
 The routing investigation below turned up something larger than routing. The seatbelt's home
 read-deny emptied `process.env` for **every** Bun process whose cwd sat inside the operator home,
@@ -158,7 +161,71 @@ RAW-vs-L7 delta, needs the re-run.** The harness fix is in (`Sandbox.runWorkspac
 is the existing wave commands with no new flags. This supersedes items 4–7 of Phase 5 in priority —
 confirming a number five times is worthless if the lane that produced it was mis-configured.
 
-## Phase 4 results — all three waves (run 2026-08-09, scaffolded lanes superseded)
+## Final results (scaffolded lanes re-run 2026-08-10, judged 2026-08-10)
+
+**560/560 cells, 559 `success`, containment clean (18827 files, 0 violations — and 0 for each live
+lane scanned alone: RAW 5051, L5 3338, L6 2137, L7 8293), 220 rubric verdicts, zero judge errors,
+zero rows unjudged.** Every scaffolded cell ran with a working hook layer, evidenced per cell
+(L5 24.0, L6 21.8, L7 25.4 hook-state files written per cell; RAW zero). Recorded cost $359.37
+across 17.1 h of cell wall-clock.
+
+**Containment-gate hygiene, fixed 2026-08-10.** The retired FORK lane's per-cell artifacts were
+still sitting inside `results/` (`phase1/FORK/`, and a `phase1-polluted/FORK/` tree from the
+retracted phases). Those derive from a private scaffold that legitimately contains the operator's
+real identity, so a full-tree scan reported **101 violating files — every one of them FORK, none
+in any live cell.** That is not a sandbox escape; it is a retired lane's own content sitting where
+the gate looks. Both trees are now quarantined under `_archive/fork-retired-2026-08-10/`, which is
+what `.gitignore` already says `_archive/` is for ("quarantined out of results/ so the fleet
+containment gate scans only live cells"). The fix is a move, not a code change — **no exemption
+was added to `LeakCheck`**, because an exemption is exactly how a gate stops meaning anything.
+
+Numbers: `results/phase1/REPORT.md`, `docs/report-data.json`, `docs/report.html`. **Everything in
+the Phase 4 section below is superseded** and retained only as the history of how it was wrong.
+
+Two grader defects were found while regenerating, both one-directional, both now fixed with
+regression tests and listed in `README.md` → Grader integrity:
+
+- **A `skipped` grader counted as a task failure.** The golden set skips checks that cannot apply
+  to a version — RAW's T5 grounding — so a documented exemption became a penalty, and only the
+  control was ever exempt.
+- **Prompts a lane never ran counted against it.** `tier_models` restricts T5 to the two bisect
+  models, but pass@k divided by all 21 prompts regardless, so six of eight model lanes were
+  graded on five prompts never sent to them. Worth up to 23.8 points per lane, and the sole
+  source of the Phase 4 headline "no model passes 100% bare".
+
+### What the judged data says
+
+**On T1–T4 the scaffolding does not help.** Bisect models, four non-personalization tiers:
+
+| Version | T1–T4 pass@k | T1–T4 pass^k | Mean output tokens/cell |
+|---|---:|---:|---:|
+| RAW | **96.9%** | 93.8% | 2.8k |
+| L5 | 96.9% | 90.6% | 10.9k |
+| L6 | 93.8% | 93.8% | 2.0k |
+| L7 | 90.6% | 87.5% | 2.9k |
+
+The six-model sweep agrees: RAW 95.8% vs L7 93.8% on T1–T4. Monotone by version, and inside the
+noise band a 1–2 trial design can resolve (one prompt = 4.8–6.3 points).
+
+**On T5 it is decisive.** RAW 40.0% pass@k / 10.0% pass^k; L5 100/60, L6 90/70, L7 90/60. Large,
+consistent across versions and models, and close to tautological — the control structurally
+cannot know the persona. What it establishes is that the delivery mechanism works.
+
+**RAW vs L7 per model (pass@k):** sonnet-5 +14.3, opus-4-8 +6.3, fable-5 / haiku-4-5 / terra /
+luna 0.0, opus-5 −6.2, sol −12.5. Does not sort by model tier; only the outer two are outside the
+noise band.
+
+**Cost separates the versions cleanly.** L5 ~10.9k output tokens/cell vs L6 2.0k and L7 2.9k, for
+a task pass-rate inside the noise band. Format compliance moves the other way: L5 70% → L6 100% →
+L7 96.4% (the last dragged down entirely by Haiku 4.5 at 66.7%).
+
+**Both retracted Phase 1–3 headlines still fail, and one Phase 4 headline joins them.** "Frontier
+models pass 100% bare" is *partly rehabilitated* — four of eight models do reach 100% pass@k bare
+on the prompts they ran — but not as originally argued, and Phase 4's counter-claim that nothing
+exceeds 85.7% bare was a grader artifact. "Small models get worse under scaffolding" still does
+not reproduce: Haiku 4.5 is flat on pass@k and pays its cost in format compliance.
+
+## Phase 4 results — all three waves (run 2026-08-09, SUPERSEDED — hooks were off)
 
 **560/560 cells run, 559 `success`, containment clean, zero pending judges.** Numbers in
 `results/phase1/REPORT.md`. The single failure is `RAW/opus-5/t4-casual-complex/trial-2`, a
@@ -242,8 +309,10 @@ the system prompt says to; Claude models mostly do not.
 
 ## Phase 5 — hardening
 
-Ordered. (1) gates the routing half of the study; (2) and (3) are cheap and unblock T5; the rest
-is confirmation work.
+**Items 1–4 are done.** Their outcomes are recorded inline rather than deleted, because two of
+them (the credential decision, the hook re-run) are permanent constraints on how any future result
+here must be read. Items 5–8 remain and were re-ordered against the judged data — see
+*What remains* below.
 
 1. ~~**Isolate the empty-hook-environment cause.**~~ **Done 2026-08-10 — and the premise was
    wrong.** Claude Code does not empty the hook environment. The cause was the seatbelt read-deny
@@ -268,16 +337,14 @@ is confirmation work.
    If routing stays unmeasurable, the fallback of patching the staged `Inference.ts` to spawn an
    absolute binary path is now known NOT to help — the binary was always findable; the environment
    was not. Do not spend on it.
-2. **Re-judge the void T5 rows.** Every T5 verdict in Waves A/B was produced before the judge
-   received the persona, so `grounding_quality` was graded against materials the judge could not
-   see — two cells citing the identical real fact got opposite verdicts. `Judge.ts` now supplies
-   it; the old rows must be dropped from `judge-grades.jsonl` and re-judged.
-
-   Status 2026-08-10: the scaffolded lanes' judge rows are already gone (their cells are being
-   re-run, so they will be judged fresh). What remains is RAW's 20 T5 rows. `Judge.ts` gained the
-   persona in `dfea7a3` (2026-08-09 17:42) and the file was last written 2026-08-10 06:11, but rows
-   carry no timestamp, so "written after the fix" cannot be proven per row — **drop RAW's 20 T5 rows
-   and re-judge them with the rest.** Twenty judge calls is cheaper than an unresolvable asterisk.
+2. ~~**Re-judge the void T5 rows.**~~ **Done 2026-08-10.** Every T5 verdict in Waves A/B predated
+   the judge receiving the persona, so `grounding_quality` was graded against materials the judge
+   could not see. The scaffolded lanes' rows went with their re-run; RAW's 20 T5 rows carried no
+   timestamp, so "written after the fix" could not be proven per row and they were dropped
+   wholesale (backup: `_archive/judge-grades-preT5rejudge-2026-08-10.jsonl`) and re-judged with
+   the rest. **164 rows judged in two cross-vendor passes, zero judge errors, zero rows left
+   pending.** Note for anyone reconciling counts: the pending-row figure quoted before this ran
+   (146) counted raw JSONL lines; deduped latest-wins it was 144 scaffolded + 20 RAW = 164.
 3. ~~**Decide the Chrome-denial contamination semantics.**~~ **Done 2026-08-10 — narrowed.**
    `LeakCheck` now exempts an escape-pattern hit when the SAME line carries an explicit refusal
    marker (`Operation not permitted`, `deny(1)`, `EPERM`, …). Safe by construction: a successful
@@ -285,9 +352,12 @@ is confirmation work.
    never exempted. Note the premise had thinned — only one cell was ever lost to this
    (`RAW/gpt-5.6-sol/t4-casual-complex/trial-1`) and a retry cleared it, so the change is
    insurance for the re-run rather than a fix for a live failure.
-4. **Re-run the scaffolded lanes first (348 cells).** Decided 2026-08-10; supersedes 5–7 in
-   priority. Phase 4's L5/L6/L7 artifacts are archived under `_archive/prehooks-phase4-2026-08-10/`
-   (with their judge rows) so Fleet re-runs them; RAW's 212 cells are untouched and still valid.
+4. ~~**Re-run the scaffolded lanes (348 cells).**~~ **Done 2026-08-10 — all 348 `success`.**
+   L5 68 + L6 68 + L7 212, every cell with a working hook layer and per-cell evidence of it
+   (`meta.hook_state`: L5 24.0, L6 21.8, L7 25.4 files written per cell). Phase 4's L5/L6/L7
+   artifacts are archived under `_archive/prehooks-phase4-2026-08-10/` (with their judge rows);
+   RAW's 212 cells are untouched and still valid. The account of how it was found and fixed
+   follows, because it is the credibility story rather than a changelog entry.
 
    **Turning the hooks on took three fixes, not one — each of the first two hid the next.**
    Fix 1 was the cwd/`process.env` fault (`Sandbox.runWorkspace`). Fix 2 was install completeness:
@@ -329,15 +399,45 @@ is confirmation work.
    another cell. If that argument is ever doubted, the fix is to re-run RAW (212 cells), not to
    hedge the number.
 
-5. **5-trial confirmation** on every cell a headline rests on. Priority order from observed
-   variance: `routed_heavy` (L5/terra 2/2 vs L5/sonnet 0/2 on the same scaffold), then format
-   compliance, then `algorithm_entered`.
-6. **Raise the judge's discriminative power.** `min_score` is 3 of 5 and ~68% of scores are 5s, so
-   task pass-rate separates versions weakly. Either raise the threshold or sharpen the rubrics.
+### What remains, re-ordered by what the judged data justifies
+
+5. **5-trial confirmation — now the gating item, and its target has changed.** Every T1–T4
+   difference on this page is inside the band one prompt is worth (4.8 points on a 21-prompt lane,
+   6.3 on a 16-prompt lane), so "the scaffolding does not help on general tasks" currently rests
+   on a *direction* that is consistent across two independent lane sets rather than on a
+   separation. Priority order, replacing the old one:
+   1. **RAW vs L7 on the two outlier models** — sonnet-5 (+14.3) and gpt-5.6-sol (−12.5) are the
+      only per-model deltas outside the noise band, and both headline claims lean on them.
+   2. **The T1–T4 version ladder on the bisect models** (96.9 / 96.9 / 93.8 / 90.6) — monotone, but
+      each step is one prompt.
+   3. **Format compliance**, still observed varying run to run on an identical lane.
+
+   ~~`routed_heavy` / `algorithm_entered`~~ are **obsolete** as confirmation targets: one version
+   has no router by design and the other's cannot authenticate in-sandbox, so more trials would
+   only re-measure unrouted model behaviour with tighter error bars.
+
+6. **Raise the judge's discriminative power — cheapest remaining win, and it needs no new judge
+   calls.** Scores are recorded, so the threshold is a re-analysis, not a re-run. Measured
+   sensitivity on the 220 verdicts: at `min_score` 3 → 184 pass; at 4 → 149 (35 verdicts flip,
+   RAW 15 / L7 13 / L5 5 / L6 2); at 5 → 120. The flips are roughly proportional to each version's
+   row count, so the threshold probably does not reverse any finding — but it moves absolute
+   pass-rates by more than most version differences here, which is the actual complaint.
+
+   Sharpening the rubrics is the better fix and this run produced the evidence for it: a
+   `t5-conflict` verdict scored 3 and **passed** while its own reasoning states the response "does
+   not acknowledge the standing TypeScript/Bun preference" — the precise thing the rubric asks
+   about. That closes the standing open item below: the judge is *not* strict about
+   acknowledgement at a 3-of-5 bar. Either the rubric must make acknowledgement a floor rather
+   than a dimension, or `min_score` for that expectation must be 4.
 7. **Judge agreement check:** re-judge a sample with the alternate vendor and record disagreement
-   rather than averaging it.
-8. **Conditional bisect narrowing:** only if Q1 shows a cliff between two adjacent versions, add
-   intermediate tags, routing tiers only, sonnet only.
+   rather than averaging it. Unchanged in priority — but note the score distribution is bimodal
+   (120 fives, 34 ones, only 66 in between of 220), so a disagreement study should sample the
+   middle deliberately rather than uniformly.
+8. **Conditional bisect narrowing — now answerable, and mostly negative.** Q1 shows **no cliff in
+   task pass-rate** between adjacent versions (T1–T4: 96.9 → 93.8 → 90.6; T5: 100 → 90 → 90), so
+   the conditional does not fire for that metric and intermediate tags would buy nothing. It
+   *does* fire for **format compliance**, where L5 → L6 is a genuine step (70% → 100%) — if
+   anything gets bisected, it is that, on format graders only, sonnet only.
 
 ## Phase 6 — shipping
 
@@ -363,11 +463,20 @@ is confirmation work.
 
 ## Known open items
 
-- `t5-conflict`'s `helper_produced` check accepts any language by design; the rubric carries
-  the actual judgement. Confirm the judge is strict about acknowledgement.
-- **T5 rows judged before 2026-08-09 are void and need re-judging.** The judge prompt never
-  contained the persona, so `grounding_quality` asked it to verify citations against materials it
-  could not see; two cells citing the identical real fact got opposite verdicts. `Judge.ts` now
-  supplies the persona for T5 judgments, but the existing T5 verdicts predate that fix.
+- ~~`t5-conflict` — confirm the judge is strict about acknowledgement.~~ **Answered 2026-08-10:
+  it is not.** A verdict scored 3 and passed while its own reasoning says the response "does not
+  acknowledge the standing TypeScript/Bun preference". `helper_produced` accepts any language by
+  design and the rubric was supposed to carry the judgement; at a 3-of-5 bar it does not. Fix
+  routes through Phase 5 item 6.
+- ~~T5 rows judged before 2026-08-09 are void.~~ **Closed 2026-08-10** — all re-judged with the
+  persona supplied; see Phase 5 item 2.
+- **Cells can act on the host outside the seatbelt.** A cell that renders a page launches a
+  browser through the OS, which is not inside the profile; leftover tabs pointing at cell
+  workspaces were found in the operator's browser session after the run. Nothing flows back into
+  the cell and containment scans clean, so validity is unaffected — but "the cell cannot affect
+  the host" is not a claim this harness can make, and it belongs in the write-up's threat model.
+- **Version-level roll-ups mix lane sets.** RAW and L7 have eight lanes; L5 and L6 have two. A
+  version's overall `task_at_k_pct` is therefore not comparable across versions — use the
+  bisect-model tables, or the per-model deltas.
 - RAW rows show `—` for routing and format by construction, not by missing data.
-- `results/phase1/` path name is now historical; runs are Phase 4 but land there.
+- `results/phase1/` path name is now historical; runs land there regardless of phase.
