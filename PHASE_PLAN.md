@@ -133,7 +133,32 @@ Judges stay blinded and cross-vendor: Claude-family cells judged by GPT, GPT cel
 already covers `═══`, `LifeOS`, `♻`, and the `🗣️` closer, so v5/v6/v7 formats are all
 stripped. Re-check it if any version's banner changes.
 
-## Phase 4 results — all three waves (run 2026-08-09)
+## Phase 4 scaffolded lanes are invalid — re-run required (found 2026-08-10)
+
+The routing investigation below turned up something larger than routing. The seatbelt's home
+read-deny emptied `process.env` for **every** Bun process whose cwd sat inside the operator home,
+and every scaffold hook is `#!/usr/bin/env bun`. So the whole hook layer of every scaffolded
+version was non-functional for the entire run:
+
+| Version | Hooks registered | Cells recording hook failures |
+|---|---:|---:|
+| RAW | 0 | 0 / 212 |
+| L5 | 34 | 66 / 68 |
+| L6 | 60 | 67 / 68 |
+| L7 | 51 | 210 / 212 |
+
+The prompt-and-context half of each scaffold worked throughout — the system prompt arrives by CLI
+flag, `CLAUDE.md` and its `@`-imports by file read, and L7 does emit its banner. What was switched
+off is the enforcement half. Phase 4 therefore measured *scaffold-minus-hooks*, which for a
+framework built on "code before prompts" understates it, and in an unknown direction for format
+compliance and task pass-rate alike.
+
+**Consequence for the numbers below: RAW-only figures stand; every L5/L6/L7 figure, and every
+RAW-vs-L7 delta, needs the re-run.** The harness fix is in (`Sandbox.runWorkspace`), so the re-run
+is the existing wave commands with no new flags. This supersedes items 4–7 of Phase 5 in priority —
+confirming a number five times is worthless if the lane that produced it was mis-configured.
+
+## Phase 4 results — all three waves (run 2026-08-09, scaffolded lanes superseded)
 
 **560/560 cells run, 559 `success`, containment clean, zero pending judges.** Numbers in
 `results/phase1/REPORT.md`. The single failure is `RAW/opus-5/t4-casual-complex/trial-2`, a
@@ -166,27 +191,50 @@ comparable or better pass-rates.
 
 ### The routing metric did not survive contact with the harness
 
-L6 and L7 route through an LLM-backed classifier hook (`TheRouter.hook.ts`). It *runs* inside
-cells, and returns a correct `MODE: ALGORITHM | TIER: E3` when invoked standalone — even under the
-seatbelt, in 5s against its own 35s timeout. Inside a cell it never delivers a decision.
+**Correction (2026-08-10).** The Phase 4 write-up said "Claude Code spawns hook subprocesses with
+an EMPTY environment." That is false, and it was believed for a whole wave. A `/usr/bin/env` probe
+registered as a real hook, inside a real cell, prints **121 variables** with correct `HOME`,
+`PATH` and `CLAUDE_CONFIG_DIR`. Two things were also conflated: **only v6 ships a router hook.**
+v7.28.3 retired modes and registers no `TheRouter.hook.ts` at all, so an "L7 routing" figure was
+never a measurement of routing in the first place.
 
-**Root cause: Claude Code spawns hook subprocesses with an EMPTY environment.** Measured from
-inside the hook process: `{"HOME": null, "PATH": "", "CLAUDE_CONFIG_DIR": null}` — zero variables.
-`$HOME` is expanded in the *command string* (which is why the hook file is found at all) but
-nothing is passed through. With no `PATH`, upstream's `spawn('claude')` fails with
-`Executable not found in $PATH: "claude"`, the router fail-safes to NATIVE on every prompt, and
-the model never enters the Algorithm. The same cause explains the SessionEnd hooks that crash on
-`process.env.HOME!` — those were the visible edge of it, initially dismissed as cosmetic.
+**Real cause #1 — the seatbelt, via Bun, via cwd (fixed).** In the *same* hook invocation where
+`/usr/bin/env` prints 121 variables, a `bun` process prints `Object.keys(process.env).length === 0`.
+Bun reads something under the operator home during startup; the profile's
+`(deny file-read* (subpath <realHome>))` refuses it, and Bun silently yields an empty environment
+instead of failing. Every scaffold hook is `#!/usr/bin/env bun`, so all of them ran with no `PATH`,
+and v6's router `spawn('claude')` failed with `Executable not found in $PATH: "claude"` and
+fail-safed to NATIVE on every prompt.
 
-Ruled out with direct probes, each: hooks not firing headless (a marker hook fires), hook timeout
-(5s vs 35s), `CLAUDECODE` (upstream clears it), credentials in-sandbox, `settings.env` injection,
-an ephemeral `cmux` PATH shim, seatbelt exec denial (`bun` and a nested `claude -p` both execute
-inside the profile), and a sandbox-local `bin/claude` shim verified first on PATH and runnable.
+The trigger is **cwd alone** — not `claude`, not `HOME`, not the config root. Reproduced with no
+`claude` anywhere in the chain: same profile, same environment, cwd inside the denied tree → 0
+variables; cwd under `/private/tmp` → 119. Removing the read-deny fixes it; removing the
+write-deny does not. Cells now run with their working directory outside the operator home
+(`Sandbox.runWorkspace`) and the workspace is copied back beside its artifacts afterwards. The
+boundary is unchanged — the operator home stays denied — and the router now reaches its classifier
+(1.9s, real API call) instead of failing to find a binary.
 
-Consequence: `algorithm_read` for L6/L7 measures **unrouted model behavior**, not routing design.
-Do not report "L6 never enters the Algorithm" as a scaffold regression. L5 is unaffected because
-v5 routes via prose in `CLAUDE.md` — no subprocess, nothing to spawn. That asymmetry is itself the
-interesting result: prose routing survives an environment where hook-based routing cannot run.
+**Real cause #2 — no credentials for the nested call (open, see Phase 5).** With the environment
+fixed, v6's router now fails one layer later: `api error: claude JSON envelope is_error=true`.
+Claude Code does not pass `CLAUDE_CODE_OAUTH_TOKEN` into hook subprocesses (confirmed: no auth
+variable of any kind appears in the hook's 121), and the sandbox `HOME` deliberately contains no
+credentials — "nothing credential-bearing is placed in a sandbox" is a stated isolation invariant,
+and reachable in-sandbox credentials are a defect this harness already fixed once. On a real user's
+machine the nested `claude` authenticates from the real home, which is exactly why these hooks work
+for users and not here. Measuring hook-based routing therefore requires a deliberate decision about
+putting a credential inside a `bypassPermissions` sandbox.
+
+Previously ruled out with direct probes, each: hooks not firing headless, hook timeout (5s vs 35s),
+`CLAUDECODE`, `settings.env` injection, an ephemeral `cmux` PATH shim, seatbelt exec denial (`bun`
+and a nested `claude -p` both execute inside the profile), and a sandbox-local `bin/claude` shim
+verified first on PATH and runnable. All of those were correct rejections; the missed variable was
+cwd.
+
+Consequence for the Phase 4 numbers: `algorithm_read` for L6 measures **unrouted model behavior**,
+not routing design, and for L7 it measures a version that has no router by design. Do not report
+either as a scaffold regression. L5 is unaffected because v5 routes via prose in `CLAUDE.md` — no
+subprocess, nothing to spawn. That asymmetry is itself the interesting result: prose routing
+survives an environment where hook-based routing cannot run.
 
 What the L7 routing column *does* show, read correctly: 40% on every Claude model, 100% on all
 three GPT models. That is unrouted instruction-following — GPT models read the Algorithm because
@@ -197,13 +245,27 @@ the system prompt says to; Claude models mostly do not.
 Ordered. (1) gates the routing half of the study; (2) and (3) are cheap and unblock T5; the rest
 is confirmation work.
 
-1. **Isolate the empty-hook-environment cause.** Everything L6/L7 routing rests on is blocked
-   behind this. Open leads: whether Claude Code passes hook env differently by invocation shape or
-   version; whether upstream's own `lifeos` launch command (Setup step 8.5) changes it; and
-   comparing against a real interactive session, where upstream's hooks demonstrably work — that
-   contrast is the strongest clue, since these hooks are not broken for real users.
-   Fallback if it proves unfixable: patch the staged `Inference.ts` to spawn an absolute binary
-   path. That modifies the artifact under test and must be declared loudly in the methods.
+1. ~~**Isolate the empty-hook-environment cause.**~~ **Done 2026-08-10 — and the premise was
+   wrong.** Claude Code does not empty the hook environment. The cause was the seatbelt read-deny
+   breaking Bun whenever cwd sat inside the operator home; cells now run outside it. See the
+   correction above. What remains is a decision, not an investigation:
+
+   **1a. Decide whether cells may hold a credential.** v6's router now reaches its classifier and
+   fails on authentication: Claude Code passes no auth variable to hooks, and the sandbox `HOME`
+   holds none by design. Three options, all with real costs:
+   - **Keep credentials out (status quo).** Hook-based routing is structurally unmeasurable here;
+     report it as a permanent limitation of the method and publish v5-vs-v6 prose-routing only.
+   - **Inject a token via the staged `settings.json` `env` block** (verified to reach hooks — it
+     is how `CLAUDE_CODE_FORK_SUBAGENT` arrives). Measures the real thing, but re-opens
+     "real OAuth credentials reachable in-sandbox", a defect this harness explicitly fixed, in
+     cells running `--permission-mode bypassPermissions` with network access.
+   - **Point the nested call at a local relay** the way the claudex lanes already point
+     `ANTHROPIC_BASE_URL` at `127.0.0.1:8317` with a worthless local key. Keeps real credentials
+     out of the sandbox; costs a build, and changes what the nested call talks to.
+
+   If routing stays unmeasurable, the fallback of patching the staged `Inference.ts` to spawn an
+   absolute binary path is now known NOT to help — the binary was always findable; the environment
+   was not. Do not spend on it.
 2. **Re-judge the void T5 rows.** Every T5 verdict in Waves A/B was produced before the judge
    received the persona, so `grounding_quality` was graded against materials the judge could not
    see — two cells citing the identical real fact got opposite verdicts. `Judge.ts` now supplies

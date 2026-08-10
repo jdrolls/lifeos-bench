@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { chmod } from "node:fs/promises";
 import { ensure, exists, path } from "./Common.ts";
@@ -153,6 +153,39 @@ export async function prepareFakeHome(version: string): Promise<string> {
     await ensure(join(home, directory));
   }
   return home;
+}
+
+/**
+ * Where a cell's working directory physically lives — deliberately OUTSIDE the operator home.
+ *
+ * This is not tidiness; it is what makes the scaffolds' hooks work at all.
+ *
+ * Every LifeOS hook is `#!/usr/bin/env bun`. Under the seatbelt, a Bun process whose cwd sits
+ * inside the denied `realHome` subtree starts with a COMPLETELY EMPTY `process.env` — measured
+ * from inside the hook: `Object.keys(process.env).length === 0`, while `/usr/bin/env` in the very
+ * same hook invocation prints 121 variables. Bun reads something under the home during startup,
+ * the read is refused, and it silently yields an empty environment rather than failing.
+ *
+ * The consequence was the benchmark's headline routing result: with no PATH, v6's router hook
+ * `spawn('claude')`s into `Executable not found in $PATH: "claude"`, fail-safes to NATIVE on every
+ * prompt, and the model never enters the Algorithm. That looked exactly like a scaffold choosing
+ * not to route.
+ *
+ * cwd is the whole trigger — `HOME`, the config root and the staged install may all stay inside the
+ * repo. Same seatbelt profile, same environment, cwd under `/private/tmp`: 119 variables. So the
+ * fix is to run cells somewhere with no denied ancestors, and copy the workspace back afterwards.
+ * The boundary is unchanged (the operator home stays denied); only the cwd moves.
+ */
+export function runWorkspaceRoot(): string {
+  const temporary = tmpdir();
+  // A TMPDIR inside the operator home would reintroduce the exact denial this avoids.
+  const base = temporary.startsWith(realHome) ? "/tmp" : temporary;
+  return join(base, "lifeos-bench-cells");
+}
+
+/** Per-cell working directory outside the denied home. Unique per cell so concurrency is safe. */
+export function runWorkspace(version: string, model: string, promptId: string, trial: number): string {
+  return join(runWorkspaceRoot(), version, model, promptId, `trial-${trial}`, "workspace");
 }
 
 export type SandboxPaths = {

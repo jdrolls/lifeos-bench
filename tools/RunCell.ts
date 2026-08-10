@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { arg, changed, copyTree, ensure, exists, gitWorkspaceDiff, json, path, reset, snapshot, writeJson } from "./Common.ts";
 import { gradeTrial } from "./Grade.ts";
 import { leakCheck } from "./LeakCheck.ts";
-import { claudeBinary, cliShimDirectory, configRoot, prepareFakeHome, sanitizeEnvironment, writeSeatbeltProfile } from "./Sandbox.ts";
+import { claudeBinary, cliShimDirectory, configRoot, prepareFakeHome, runWorkspace, sanitizeEnvironment, writeSeatbeltProfile } from "./Sandbox.ts";
 
 type ResultEvent = {
   type?: string;
@@ -110,6 +110,13 @@ async function main(): Promise<void> {
   if (prompt.fixture) await copyTree(path("fixtures", prompt.fixture), workspace);
   await copyTree(workspace, baselineDirectory);
 
+  // The cell runs OUTSIDE the operator home and is copied back afterwards. See
+  // Sandbox.runWorkspaceRoot: a Bun process with cwd inside the denied home gets an empty
+  // process.env, which silently disabled every hook-based router in the scaffolds under test.
+  const liveWorkspace = runWorkspace(version, model, promptId, trial);
+  await reset(liveWorkspace);
+  await copyTree(workspace, liveWorkspace);
+
   const before = await snapshot(workspace);
   const startedAt = Date.now();
   // HOME redirect is the fidelity half of isolation: every scaffold references
@@ -173,9 +180,9 @@ async function main(): Promise<void> {
     // Seatbelt is the safety half: bypassPermissions removes every in-harness check, so the
     // kernel has to be the thing that says no. Profile is written beside the artifacts so a
     // contaminated cell can be reproduced exactly.
-    const profileFile = await writeSeatbeltProfile({ fakeHome, configRoot: sandbox, workspace, trialDirectory: output });
+    const profileFile = await writeSeatbeltProfile({ fakeHome, configRoot: sandbox, workspace: liveWorkspace, trialDirectory: output });
     spawnArgv = ["/usr/bin/sandbox-exec", "-f", profileFile, await claudeBinary(), ...claudeArguments];
-    const child = spawn(spawnArgv[0], spawnArgv.slice(1), { cwd: workspace, env: environment, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(spawnArgv[0], spawnArgv.slice(1), { cwd: liveWorkspace, env: environment, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     const timeoutMs = Number(config.runner.timeout_per_run_s) * 1_000;
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("runner timeout_per_run_s must be positive");
     child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
@@ -201,6 +208,13 @@ async function main(): Promise<void> {
   }
 
   await reapEscapedProcesses(output);
+  await reapEscapedProcesses(liveWorkspace);
+
+  // Bring the cell's work back beside its artifacts so grading, diffing and LeakCheck all read
+  // the same tree they always have; nothing downstream needs to know the run happened elsewhere.
+  await reset(workspace);
+  await copyTree(liveWorkspace, workspace);
+  await rm(liveWorkspace, { recursive: true, force: true });
 
   const transcript = stdout.length === 0 || stdout.endsWith("\n") ? stdout : `${stdout}\n`;
   await writeFile(join(output, "transcript.jsonl"), transcript);
@@ -239,7 +253,7 @@ async function main(): Promise<void> {
     system_prompt_file: systemPromptFile ?? null,
     // Isolation provenance: a later reader should be able to confirm the boundary from the
     // artifact alone, without re-probing a machine whose state has since moved on.
-    isolation: { home: fakeHome, config_dir: sandbox, seatbelt_profile: join(output, "sandbox.sb") },
+    isolation: { home: fakeHome, config_dir: sandbox, seatbelt_profile: join(output, "sandbox.sb"), run_workspace: liveWorkspace },
     ...(launchError ? { launch_error: launchError } : {}),
     ...(diff.error ? { workspace_diff_error: diff.error } : {}),
   };

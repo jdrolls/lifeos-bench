@@ -67,7 +67,13 @@ function matches(value: string, pattern: unknown): boolean {
  * — the exact thing this benchmark exists to measure.
  */
 export function isScaffoldState(file: unknown): boolean {
-  return typeof file === "string" && /(^|\/)\.claude\//.test(file);
+  if (typeof file !== "string") return false;
+  // A literal `$HOME` directory, created relative to cwd because v6/v7 declare settings.json
+  // `env` values like `LIFEOS_DIR="$HOME/.claude/LIFEOS"` and Claude Code does not expand `$VAR`
+  // there. It only appeared once the hooks could actually run, and it is hook bookkeeping in
+  // every observed case — but it is not always under `.claude/`, so match the prefix directly.
+  if (/(^|\/)\$\{?HOME\}?\//.test(file)) return true;
+  return /(^|\/)\.claude\//.test(file);
 }
 
 function numeric(value: unknown, field: string): number {

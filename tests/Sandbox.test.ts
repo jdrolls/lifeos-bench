@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { configRoot, fakeHome, sanitizeEnvironment, seatbeltProfile } from "../tools/Sandbox.ts";
+import { configRoot, fakeHome, realHome, runWorkspace, runWorkspaceRoot, sanitizeEnvironment, seatbeltProfile } from "../tools/Sandbox.ts";
 
 const HOME = "/Users/operator";
 const OPERATOR_CONFIG = join(HOME, ".claude");
@@ -73,5 +73,29 @@ describe("sandbox layout", () => {
     expect(profile).toContain('(deny file-read* (subpath "');
     expect(profile).toContain(`(allow file-read* (subpath "${configRoot("L6")}")`);
     expect(profile).toContain(`(allow file-write* (subpath "${configRoot("L6")}")`);
+  });
+});
+
+/**
+ * Regression: the cell working directory must live OUTSIDE the operator home.
+ *
+ * Under the seatbelt, a Bun process whose cwd sits inside the denied home starts with a
+ * completely empty `process.env` — 0 variables, while `/usr/bin/env` in the same hook
+ * invocation prints 121. Every scaffold hook is `#!/usr/bin/env bun`, so with no PATH the
+ * v6 router's `spawn('claude')` failed with `Executable not found in $PATH: "claude"`,
+ * fail-safed to NATIVE on every prompt, and the model never entered the Algorithm. That was
+ * reported as a scaffold routing result for an entire wave.
+ */
+describe("runWorkspace", () => {
+  test("never sits inside the operator home", () => {
+    expect(runWorkspaceRoot().startsWith(realHome)).toBe(false);
+    expect(runWorkspace("L6", "sonnet-5", "t1-fact", 1).startsWith(realHome)).toBe(false);
+  });
+
+  test("is unique per cell so concurrent cells cannot share a cwd", () => {
+    const a = runWorkspace("L6", "sonnet-5", "t1-fact", 1);
+    const b = runWorkspace("L6", "sonnet-5", "t1-fact", 2);
+    const c = runWorkspace("L7", "sonnet-5", "t1-fact", 1);
+    expect(new Set([a, b, c]).size).toBe(3);
   });
 });

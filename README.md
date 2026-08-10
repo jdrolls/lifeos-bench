@@ -62,7 +62,7 @@ _archive/         retired and pre-fix artifacts (gitignored)
 ## Running
 
 ```bash
-bun test                                   # 54 tests, 0 failures
+bun test                                   # 57 tests, 0 failures
 bun tools/StageVersion.ts L5 --force       # and L6, L7, RAW
 bun tools/Fleet.ts --dry-run | wc -l       # 560 = the full matrix
 
@@ -83,10 +83,21 @@ Claudex lanes additionally need CLIProxyAPI up on `:8317` and signed in.
 
 ## Status
 
-**Phase 4 complete — all three waves. 560/560 cells run, 559 `success`, containment clean, zero
-pending judges.** Full numbers: [`results/phase1/REPORT.md`](results/phase1/REPORT.md). The one
-failure is `RAW/opus-5/t4-casual-complex/trial-2`, a reproducible 1200s timeout recorded as such
-rather than rescued by raising the ceiling.
+**Phase 4 ran to completion — 560/560 cells, 559 `success`, containment clean, zero pending
+judges — but its scaffolded lanes must be re-run.** Full numbers:
+[`results/phase1/REPORT.md`](results/phase1/REPORT.md). The one failure is
+`RAW/opus-5/t4-casual-complex/trial-2`, a reproducible 1200s timeout recorded as such rather than
+rescued by raising the ceiling.
+
+> **Every scaffolded lane ran with its hook layer disabled** (found 2026-08-10). The seatbelt's
+> home read-deny emptied `process.env` for any Bun process whose cwd sat inside the operator home,
+> and every scaffold hook is `#!/usr/bin/env bun`. Cells recording hook failures: **L5 66/68,
+> L6 67/68, L7 210/212 — RAW 0/212**, because RAW registers no hooks. So Phase 4 measured the
+> *prompt-and-context* half of each scaffold (system prompt, `CLAUDE.md`, imports — all CLI flags
+> and file reads, all working) with the *enforcement* half switched off. For a framework whose
+> founding principles include "code before prompts", that understates it. The harness is fixed
+> (`Sandbox.runWorkspace`); L5/L6/L7 need re-running before any version claim is quoted. RAW-only
+> figures are unaffected.
 
 Findings — (1) and (3) span all eight models; (2) is the version bisect, which runs on the two
 bisect models by design:
@@ -108,13 +119,18 @@ bisect models by design:
 
 Read these before quoting any number.
 
-- **Routing is not currently measurable for L6/L7.** Both route via an LLM-backed classifier hook.
-  Claude Code spawns hook subprocesses with an **empty environment** — measured from inside the
-  hook: `{"HOME": null, "PATH": "", "CLAUDE_CONFIG_DIR": null}`. With no `PATH`, upstream's
-  `spawn('claude')` fails and the router fail-safes to NATIVE on every prompt. The classifier is
-  correct when run standalone. So `algorithm_read` for L6/L7 measures *unrouted* model behavior,
-  not the scaffold's routing design — and must not be reported as a regression. L5 is unaffected:
-  v5 routes via prose in `CLAUDE.md`, which spawns nothing. Read correctly, the L7 routing column
+- **Routing was not measurable for L6 in the Phase 4 data**, and **L7 has no router to measure** —
+  v7.28.3 retired modes and registers no classifier hook at all. For L6 the earlier explanation
+  ("Claude Code spawns hooks with an empty environment") was **wrong**: a `/usr/bin/env` probe
+  registered as a real hook inside a real cell prints 121 variables. The actual cause was the
+  seatbelt — a Bun process whose cwd sat inside the denied operator home started with
+  `process.env` completely empty, so the router's `spawn('claude')` could not resolve a binary
+  that was on its PATH the whole time. Cells now run with a cwd outside that tree
+  (`Sandbox.runWorkspace`) and the router reaches its classifier. It then fails one layer later:
+  Claude Code passes no auth variable to hooks and the sandbox `HOME` holds no credentials by
+  design, so the nested `claude` cannot authenticate. So `algorithm_read` for L6 still measures
+  *unrouted* model behavior and must not be reported as a regression. L5 is unaffected: v5 routes
+  via prose in `CLAUDE.md`, which spawns nothing. Read correctly, the L7 routing column
   (40% Claude / 100% GPT) is a finding about instruction-following without enforcement.
 - **RAW is bare of LifeOS, not of all scaffolding.** The control still has Claude Code's bundled
   skills; one cell was observed invoking `dataviz` to build its page.
@@ -128,7 +144,7 @@ Read these before quoting any number.
 
 ## Grader integrity
 
-Ten harness and grader defects were found and fixed while building this, each with a regression
+Eleven harness and grader defects were found and fixed while building this, each with a regression
 test. They are listed because a benchmark's credibility rests on how its own errors were caught,
 not on the absence of errors:
 
@@ -144,6 +160,7 @@ not on the absence of errors:
 | Judge prompt omitted the persona | T5 grounding judged against materials the judge could not see |
 | `Fleet`/`Judge` had no wave or vendor filter | Wave B would have run 424 cells; cross-vendor blinding was inexpressible |
 | Cells leaked browser processes | Orphaned Chrome drove machine load to 13; inflated wall-clock and caused false "timeouts" |
+| Cell cwd inside the seatbelt's denied home | Emptied `process.env` for **every** Bun hook, disabling v6's router and producing a routing result that was really a harness artifact |
 
 Two are worth singling out. **`workspace_diff_count`** was one-directional — only versions *with*
 hooks could be penalised — so it biased the benchmark toward its own null hypothesis. It was

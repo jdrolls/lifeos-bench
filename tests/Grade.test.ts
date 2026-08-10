@@ -156,6 +156,21 @@ describe("scaffold state is not the model's work product", () => {
     expect(isScaffoldState("nested/.claude/PAI/MEMORY/STATE/x.json")).toBe(true);
   });
 
+  /**
+   * Regression: once the hooks could actually run (the empty-Bun-environment fix), v6/v7 cells
+   * started creating a literal `$HOME` directory in the workspace — settings.json declares
+   * `LIFEOS_DIR="$HOME/.claude/LIFEOS"` and Claude Code does not expand `$VAR` in that block.
+   * It is hook bookkeeping, and counting it would re-open the one-directional bias above,
+   * since only versions WITH hooks can produce it.
+   */
+  test("isScaffoldState identifies the unexpanded $HOME directory", () => {
+    expect(isScaffoldState("$HOME/.claude/LIFEOS/MEMORY/STATE/instruction-hashes.json")).toBe(true);
+    expect(isScaffoldState("$HOME/Documents/scratch.json")).toBe(true);
+    expect(isScaffoldState("${HOME}/.claude/x.json")).toBe(true);
+    // A real file that merely starts with the same letters is not scaffold state.
+    expect(isScaffoldState("HOME/readme.md")).toBe(false);
+  });
+
   test("isScaffoldState leaves real work product alone", () => {
     expect(isScaffoldState("src/index.ts")).toBe(false);
     expect(isScaffoldState("notes/todo.md")).toBe(false);
