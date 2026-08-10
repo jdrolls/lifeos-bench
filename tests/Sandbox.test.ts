@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { configRoot, fakeHome, realHome, runWorkspace, runWorkspaceRoot, sanitizeEnvironment, seatbeltProfile } from "../tools/Sandbox.ts";
+import { exists } from "../tools/Common.ts";
+import { cellHome, configRoot, fakeHome, prepareCellHome, realHome, runCellRoot, runWorkspace, runWorkspaceRoot, sanitizeEnvironment, seatbeltProfile } from "../tools/Sandbox.ts";
 
 const HOME = "/Users/operator";
 const OPERATOR_CONFIG = join(HOME, ".claude");
@@ -63,16 +65,70 @@ describe("sandbox layout", () => {
   });
 
   test("seatbelt denies the operator home while allowing the nested config root", () => {
+    const home = cellHome("L6", "sonnet-5", "t1-fact", 1);
     const profile = seatbeltProfile({
-      fakeHome: fakeHome("L6"),
-      configRoot: configRoot("L6"),
+      home,
+      configRoot: join(home, ".claude"),
       workspace: "/tmp/workspace",
       trialDirectory: "/tmp/trial",
     });
 
     expect(profile).toContain('(deny file-read* (subpath "');
-    expect(profile).toContain(`(allow file-read* (subpath "${configRoot("L6")}")`);
-    expect(profile).toContain(`(allow file-write* (subpath "${configRoot("L6")}")`);
+    expect(profile).toContain(`(allow file-read* (subpath "${join(home, ".claude")}")`);
+    expect(profile).toContain(`(allow file-write* (subpath "${join(home, ".claude")}")`);
+  });
+
+  /**
+   * Regression: hooks write runtime state into `$HOME/.claude/...`, so a shared staged home makes
+   * cell N's context depend on cell N-1. Measured on the first hooks-on cells: L7 wrote 29 files
+   * into the shared tree (`drift-reminder.json`, `work.json`, `review-state.json`, …) and v5's
+   * settings hooks rewrote the very `settings.json` every later cell in that lane loads.
+   *
+   * Cloning the home per cell is the fix; NOT re-allowing the staged tree in the profile is what
+   * makes it a boundary instead of a convention.
+   */
+  test("seatbelt grants the staged template no write access", () => {
+    const home = cellHome("L6", "sonnet-5", "t1-fact", 1);
+    const profile = seatbeltProfile({
+      home,
+      configRoot: join(home, ".claude"),
+      workspace: "/tmp/workspace",
+      trialDirectory: "/tmp/trial",
+    });
+
+    expect(profile).not.toContain(`(allow file-write* (subpath "${fakeHome("L6")}")`);
+    expect(profile).not.toContain(`(allow file-write* (subpath "${configRoot("L6")}")`);
+    // …and the blanket operator-home deny is what actually refuses it, since the staged tree
+    // lives under the repo, which lives under that home.
+    expect(fakeHome("L6").startsWith(realHome)).toBe(true);
+    expect(profile).toContain(`(deny file-write* (subpath "${realHome}"))`);
+  });
+
+  test("prepareCellHome clones the staged tree and leaves the template untouched", async () => {
+    const staged = fakeHome("L6");
+    if (!(await exists(join(staged, ".claude", "settings.json")))) return; // unstaged checkout
+    const before = await readFile(join(staged, ".claude", "settings.json"), "utf8");
+    const home = await prepareCellHome("L6", "clone-test", "t1-fact", 99);
+    try {
+      expect(home).not.toBe(staged);
+      expect(await exists(join(home, ".claude", "settings.json"))).toBe(true);
+      // A hook writing into its HOME must not reach the template every other cell clones.
+      await writeFile(join(home, ".claude", "settings.json"), '{"mutated":true}\n');
+      expect(await readFile(join(staged, ".claude", "settings.json"), "utf8")).toBe(before);
+    } finally {
+      await rm(runCellRoot("L6", "clone-test", "t1-fact", 99), { recursive: true, force: true });
+    }
+  });
+
+  test("each cell gets its own home, outside the operator home", () => {
+    const a = cellHome("L6", "sonnet-5", "t1-fact", 1);
+    const b = cellHome("L6", "sonnet-5", "t1-fact", 2);
+    const c = cellHome("L7", "sonnet-5", "t1-fact", 1);
+    expect(new Set([a, b, c]).size).toBe(3);
+    for (const home of [a, b, c]) expect(home.startsWith(realHome)).toBe(false);
+    // The workspace and the home are siblings under one per-cell root, so cleanup removes both.
+    expect(runWorkspace("L6", "sonnet-5", "t1-fact", 1).startsWith(runCellRoot("L6", "sonnet-5", "t1-fact", 1))).toBe(true);
+    expect(a.startsWith(runCellRoot("L6", "sonnet-5", "t1-fact", 1))).toBe(true);
   });
 });
 

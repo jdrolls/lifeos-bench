@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
+import { cp, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { arg, changed, copyTree, ensure, exists, gitWorkspaceDiff, json, path, reset, snapshot, writeJson } from "./Common.ts";
+import { arg, changed, copyTree, ensure, exists, files, gitWorkspaceDiff, json, path, reset, snapshot, writeJson } from "./Common.ts";
 import { gradeTrial } from "./Grade.ts";
 import { leakCheck } from "./LeakCheck.ts";
-import { claudeBinary, cliShimDirectory, configRoot, prepareFakeHome, runWorkspace, sanitizeEnvironment, writeSeatbeltProfile } from "./Sandbox.ts";
+import { claudeBinary, cliShimDirectory, configRoot, prepareCellHome, runCellRoot, runWorkspace, sanitizeEnvironment, writeSeatbeltProfile } from "./Sandbox.ts";
 
 type ResultEvent = {
   type?: string;
@@ -73,6 +73,77 @@ async function reapEscapedProcesses(trialDirectory: string): Promise<void> {
   }
 }
 
+/**
+ * Preserve what the scaffold's hooks wrote into the cell's private HOME before it is deleted.
+ *
+ * Two things are recorded, for two different readers. `home-writes.txt` lists every scaffold path
+ * the run touched — a cheap answer to "did the enforcement layer run at all", which is exactly the
+ * question Phase 4 could not answer from its own artifacts. `home-state/` copies the files back,
+ * because that is where a hook records the decision it made (`format-gate.jsonl` carries a literal
+ * pass/fail per response; `ratings.jsonl` carries the nested-inference failure verbatim).
+ *
+ * Claude Code's own housekeeping is excluded, not merely uncopied. It is not scaffold behaviour and
+ * it is not small: a cell refreshes ~445 files under `plugins/` on every run, which buried the 23
+ * that were the actual evidence — and one of those plugin docs quotes `/Users/alice/.claude` as an
+ * example, which LeakCheck (correctly, for a transcript) reads as an escape marker. Copying vendor
+ * documentation into a graded artifact directory manufactured a containment violation out of a
+ * clean cell. The exclusion keeps the boundary detector pointed at cell OUTPUT.
+ */
+const HOME_STATE_SKIP = new RegExp(
+  [
+    String.raw`(^|/)(node_modules|\.git|statsig)(/|$)`,
+    // Claude Code's own per-session bookkeeping: transcripts are already captured verbatim as
+    // transcript.jsonl, and the rest is cache, telemetry and vendored plugin content.
+    String.raw`^\.claude/(projects|backups|plugins|shell-snapshots|todos|file-history|ide|downloads)/`,
+    String.raw`^(\.cache|\.local|\.config|Library|Documents)/`,
+    // The harness's own shim, written by prepareCellHome, not by anything under test.
+    String.raw`^bin/claude$`,
+  ].join("|"),
+);
+const HOME_STATE_MAX_FILE = 256 * 1024;
+const HOME_STATE_MAX_TOTAL = 4 * 1024 * 1024;
+
+/** Is this HOME-relative path scaffold behaviour worth keeping, or harness/CLI housekeeping? */
+export function isCapturedHomeState(relativePath: string): boolean {
+  return !HOME_STATE_SKIP.test(relativePath);
+}
+
+async function captureHomeState(
+  home: string,
+  output: string,
+  startedAt: number,
+): Promise<{ written: string[]; copied: number; truncated: boolean }> {
+  const written: string[] = [];
+  let copied = 0;
+  let total = 0;
+  let truncated = false;
+  for (const relativePath of await files(home)) {
+    if (!isCapturedHomeState(relativePath)) continue;
+    const absolute = join(home, relativePath);
+    let size = 0;
+    try {
+      const stats = await stat(absolute);
+      // The clone preserves mtimes, so "newer than the cell started" isolates the run's own writes.
+      if (stats.mtimeMs < startedAt) continue;
+      size = stats.size;
+    } catch {
+      continue;
+    }
+    written.push(relativePath);
+    if (size > HOME_STATE_MAX_FILE || total + size > HOME_STATE_MAX_TOTAL) {
+      truncated = true;
+      continue;
+    }
+    const destination = join(output, "home-state", relativePath);
+    await ensure(dirname(destination));
+    await cp(absolute, destination);
+    total += size;
+    copied++;
+  }
+  await writeFile(join(output, "home-writes.txt"), written.length ? `${written.join("\n")}\n` : "");
+  return { written, copied, truncated };
+}
+
 async function main(): Promise<void> {
   const version = arg("--version");
   const model = arg("--model");
@@ -91,17 +162,9 @@ async function main(): Promise<void> {
     throw new Error("unknown version, model, or prompt");
   }
 
-  const sandbox = configRoot(version);
-  if (!(await exists(sandbox))) throw new Error(`sandbox has not been staged: ${sandbox}`);
+  const stagedRoot = configRoot(version);
+  if (!(await exists(stagedRoot))) throw new Error(`sandbox has not been staged: ${stagedRoot}`);
 
-  // Fail loud rather than silently benchmarking a scaffold stripped of its constitutional layer.
-  let systemPromptFile: string | undefined;
-  if (selectedVersion.system_prompt) {
-    systemPromptFile = join(sandbox, selectedVersion.system_prompt);
-    if (!(await exists(systemPromptFile))) {
-      throw new Error(`${version} declares system_prompt ${selectedVersion.system_prompt} but it is missing from the sandbox`);
-    }
-  }
   const output = path("results", "phase1", version, model, promptId, `trial-${trial}`);
   const workspace = join(output, "workspace");
   const baselineDirectory = join(output, "baseline");
@@ -113,6 +176,7 @@ async function main(): Promise<void> {
   // The cell runs OUTSIDE the operator home and is copied back afterwards. See
   // Sandbox.runWorkspaceRoot: a Bun process with cwd inside the denied home gets an empty
   // process.env, which silently disabled every hook-based router in the scaffolds under test.
+  const cellRoot = runCellRoot(version, model, promptId, trial);
   const liveWorkspace = runWorkspace(version, model, promptId, trial);
   await reset(liveWorkspace);
   await copyTree(workspace, liveWorkspace);
@@ -120,13 +184,25 @@ async function main(): Promise<void> {
   const before = await snapshot(workspace);
   const startedAt = Date.now();
   // HOME redirect is the fidelity half of isolation: every scaffold references
-  // `~/.claude/...` thousands of times, and those must resolve to the STAGED install.
-  const fakeHome = await prepareFakeHome(version);
+  // `~/.claude/...` thousands of times, and those must resolve to the staged install — but to
+  // THIS cell's private clone of it, because the hook layer writes runtime state back into HOME.
+  const home = await prepareCellHome(version, model, promptId, trial);
+  const sandbox = join(home, ".claude");
+
+  // Fail loud rather than silently benchmarking a scaffold stripped of its constitutional layer.
+  let systemPromptFile: string | undefined;
+  if (selectedVersion.system_prompt) {
+    systemPromptFile = join(sandbox, selectedVersion.system_prompt);
+    if (!(await exists(systemPromptFile))) {
+      throw new Error(`${version} declares system_prompt ${selectedVersion.system_prompt} but it is missing from the sandbox`);
+    }
+  }
+
   const cliBinary = await claudeBinary();
   const environment: Record<string, string | undefined> = {
-    ...sanitizeEnvironment(process.env, undefined, cliShimDirectory(version)),
+    ...sanitizeEnvironment(process.env, undefined, cliShimDirectory(home)),
     CLAUDE_CONFIG_DIR: sandbox,
-    HOME: fakeHome,
+    HOME: home,
   };
   delete environment.ANTHROPIC_API_KEY;
   delete environment.ANTHROPIC_AUTH_TOKEN;
@@ -180,7 +256,7 @@ async function main(): Promise<void> {
     // Seatbelt is the safety half: bypassPermissions removes every in-harness check, so the
     // kernel has to be the thing that says no. Profile is written beside the artifacts so a
     // contaminated cell can be reproduced exactly.
-    const profileFile = await writeSeatbeltProfile({ fakeHome, configRoot: sandbox, workspace: liveWorkspace, trialDirectory: output });
+    const profileFile = await writeSeatbeltProfile({ home, configRoot: sandbox, workspace: liveWorkspace, trialDirectory: output });
     spawnArgv = ["/usr/bin/sandbox-exec", "-f", profileFile, await claudeBinary(), ...claudeArguments];
     const child = spawn(spawnArgv[0], spawnArgv.slice(1), { cwd: liveWorkspace, env: environment, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     const timeoutMs = Number(config.runner.timeout_per_run_s) * 1_000;
@@ -214,7 +290,13 @@ async function main(): Promise<void> {
   // the same tree they always have; nothing downstream needs to know the run happened elsewhere.
   await reset(workspace);
   await copyTree(liveWorkspace, workspace);
-  await rm(liveWorkspace, { recursive: true, force: true });
+
+  // The cell's home is discarded, so whatever the hook layer wrote there has to be captured
+  // first — it is the only direct evidence that the enforcement half of a scaffold actually
+  // ran. Phase 4 shipped with that half silently dead and nothing in the artifacts said so.
+  const homeState = await captureHomeState(home, output, startedAt);
+
+  await rm(cellRoot, { recursive: true, force: true });
 
   const transcript = stdout.length === 0 || stdout.endsWith("\n") ? stdout : `${stdout}\n`;
   await writeFile(join(output, "transcript.jsonl"), transcript);
@@ -253,7 +335,17 @@ async function main(): Promise<void> {
     system_prompt_file: systemPromptFile ?? null,
     // Isolation provenance: a later reader should be able to confirm the boundary from the
     // artifact alone, without re-probing a machine whose state has since moved on.
-    isolation: { home: fakeHome, config_dir: sandbox, seatbelt_profile: join(output, "sandbox.sb"), run_workspace: liveWorkspace },
+    isolation: {
+      home,
+      staged_home: stagedRoot,
+      config_dir: sandbox,
+      seatbelt_profile: join(output, "sandbox.sb"),
+      run_workspace: liveWorkspace,
+    },
+    // Proof the enforcement half ran, per cell. A scaffolded version writing nothing here is the
+    // signature of the Phase 4 failure (registered hooks that could not start) and should be read
+    // as a broken lane, not as a version that chose to do less.
+    hook_state: { files_written: homeState.written.length, files_captured: homeState.copied, truncated: homeState.truncated },
     ...(launchError ? { launch_error: launchError } : {}),
     ...(diff.error ? { workspace_diff_error: diff.error } : {}),
   };

@@ -1,6 +1,6 @@
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { chmod } from "node:fs/promises";
+import { chmod, rm } from "node:fs/promises";
 import { ensure, exists, path } from "./Common.ts";
 
 /**
@@ -27,7 +27,13 @@ import { ensure, exists, path } from "./Common.ts";
 
 export const realHome = homedir();
 
-/** Version-local HOME used to run a staged config without touching the operator's home. */
+/**
+ * The version's STAGED home — a template, not a run directory.
+ *
+ * Every cell gets its own clone of this tree (see cellHome). The distinction is load-bearing:
+ * scaffold hooks write runtime state into `$HOME/.claude/...`, so a shared home makes cell N's
+ * context depend on what cell N-1 left behind.
+ */
 export function fakeHome(version: string): string {
   return path("sandboxes", "_home", version);
 }
@@ -97,8 +103,8 @@ export function sanitizeEnvironment(
 }
 
 /** Directory holding the sandbox's own `claude`, prepended to PATH for every cell. */
-export function cliShimDirectory(version: string): string {
-  return join(fakeHome(version), "bin");
+export function cliShimDirectory(home: string): string {
+  return join(home, "bin");
 }
 
 /**
@@ -137,14 +143,50 @@ export async function claudeBinary(): Promise<string> {
 }
 
 /**
- * Ensure only the fake home's auxiliary directories. The nested config root is staged
- * separately and must never be created, replaced, or recursively removed here.
+ * Give this cell a private clone of the staged home.
+ *
+ * The staged tree is a TEMPLATE. Sharing it across cells was safe only while the hook layer was
+ * dead; the moment hooks ran, they wrote their runtime state straight back into it. Measured on
+ * the first hooks-on cells: L7 wrote 29 files under `<staged>/.claude/LIFEOS/` — including
+ * `drift-reminder.json`, `work.json`, `review-state.json` and `session-names.json`, all of which
+ * feed the NEXT session's context — and v5's settings hooks rewrote `<staged>/.claude/settings.json`
+ * itself, the file every later cell in that lane loads.
+ *
+ * That is cross-cell coupling in the only direction that matters: cell N's prompt context depends
+ * on what cell N-1 left behind, and under concurrency they race for the same files. It also
+ * falsified the independence claim `bench.config.json` makes to justify `concurrency > 1`
+ * ("the staged config root is not written at runtime").
+ *
+ * The versions differ in HOW they land, which is why this was invisible: v6 resolves
+ * `LIFEOS_DIR="$HOME/..."` literally and drops a `$HOME/` directory into the cwd (per-cell, inert),
+ * while v7 patched that expansion (#1404) and therefore writes to the REAL home — the shared one.
+ * Isolating the home fixes both without caring which of them a future version does.
+ *
+ * Clone, don't symlink: hooks must be able to write, and `cp -c` on APFS is a copy-on-write clone
+ * (~0.5s for a 26MB / 3000-file tree, no additional disk).
  */
-export async function prepareFakeHome(version: string): Promise<string> {
-  const home = fakeHome(version);
-  const root = configRoot(version);
-  if (!(await exists(root))) {
-    throw new Error(`sandbox has not been staged: missing config root ${root}`);
+export async function prepareCellHome(
+  version: string,
+  model: string,
+  promptId: string,
+  trial: number,
+): Promise<string> {
+  const staged = fakeHome(version);
+  const stagedRoot = configRoot(version);
+  if (!(await exists(stagedRoot))) {
+    throw new Error(`sandbox has not been staged: missing config root ${stagedRoot}`);
+  }
+  const home = cellHome(version, model, promptId, trial);
+  await rm(home, { recursive: true, force: true });
+  await ensure(join(home, ".."));
+  // -c requests an APFS clone and falls back to a real copy on filesystems without it.
+  const copy = Bun.spawnSync(["cp", "-Rc", staged, home]);
+  if (copy.exitCode !== 0) {
+    const detail = new TextDecoder().decode(copy.stderr).trim();
+    throw new Error(`failed to clone staged home for ${version}: ${detail}`);
+  }
+  if (!(await exists(join(home, ".claude")))) {
+    throw new Error(`cloned home is missing its config root: ${join(home, ".claude")}`);
   }
   await writeCliShim(home);
   // Scaffolds and tools also probe these; give them real, writable, sandbox-local homes
@@ -183,13 +225,27 @@ export function runWorkspaceRoot(): string {
   return join(base, "lifeos-bench-cells");
 }
 
+/** Everything one cell runs against: its workspace and its private HOME, both outside the repo. */
+export function runCellRoot(version: string, model: string, promptId: string, trial: number): string {
+  return join(runWorkspaceRoot(), version, model, promptId, `trial-${trial}`);
+}
+
 /** Per-cell working directory outside the denied home. Unique per cell so concurrency is safe. */
 export function runWorkspace(version: string, model: string, promptId: string, trial: number): string {
-  return join(runWorkspaceRoot(), version, model, promptId, `trial-${trial}`, "workspace");
+  return join(runCellRoot(version, model, promptId, trial), "workspace");
+}
+
+/**
+ * Per-cell HOME. Unique per cell for the same reason the workspace is, and outside the operator
+ * home for the same reason the cwd is (a Bun process under the denied tree loses its environment).
+ */
+export function cellHome(version: string, model: string, promptId: string, trial: number): string {
+  return join(runCellRoot(version, model, promptId, trial), "home");
 }
 
 export type SandboxPaths = {
-  fakeHome: string;
+  /** The cell's OWN home (a clone), never the shared staged template. */
+  home: string;
   configRoot: string;
   workspace: string;
   trialDirectory: string;
@@ -199,6 +255,11 @@ export type SandboxPaths = {
  * Seatbelt profile: allow by default, deny the real home, then re-allow the specific
  * subtrees a run legitimately needs. Ordering matters — later rules win, which is what
  * lets the benchmark's own directories live under the denied home.
+ *
+ * The staged home under `sandboxes/_home/` is deliberately NOT re-allowed. Cloning it before the
+ * cell starts means nothing inside the sandbox has any reason to touch it, so leaving it under the
+ * blanket home deny turns "cells must not mutate the staged install" from a convention into a
+ * kernel-enforced boundary — the same reason the operator home is denied rather than avoided.
  */
 export function seatbeltProfile(paths: SandboxPaths): string {
   const toolchain = [
@@ -207,7 +268,7 @@ export function seatbeltProfile(paths: SandboxPaths): string {
     join(realHome, ".local", "bin"),
     join(realHome, ".local", "state", "claude"),
   ];
-  const readWrite = [paths.fakeHome, paths.configRoot, paths.workspace, paths.trialDirectory];
+  const readWrite = [paths.home, paths.configRoot, paths.workspace, paths.trialDirectory];
   const quote = (value: string) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
   return [
     "(version 1)",
