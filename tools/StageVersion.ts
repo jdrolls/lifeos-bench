@@ -132,6 +132,39 @@ async function activateIdentityImports(destination: string, payload: string): Pr
   return activated.activated;
 }
 
+/**
+ * Give the staged install the dependencies its own source imports.
+ *
+ * Every version imports `yaml` from 13-14 of its own `.ts` files (`hooks/lib/identity.ts`,
+ * `LIFEOS/TOOLS/*`), reached transitively from the hooks. No release ships `node_modules`, and
+ * only v7 even declares the dependency. Without it, a hook resolves `yaml` to nothing, Bun falls
+ * back to auto-install, cannot write to a tempdir inside the seatbelt, and dies with
+ * `bun is unable to write files to tempdir: PermissionDenied`.
+ *
+ * That failure was invisible for an entire run: the empty-environment bug crashed the same hooks
+ * one step earlier on `process.env.HOME!`, so fixing the environment did not make hooks work — it
+ * only revealed the next reason they did not. 66/68 L6 cells and 34/34 L7 cells were spent
+ * measuring a scaffold whose hook layer still could not start.
+ *
+ * This is install completeness, the same class as the missing `--append-system-prompt-file`:
+ * a benchmark of an install that was never completed measures nothing. Declared in the methods,
+ * because for v5/v6 it supplies a dependency the release itself does not declare.
+ */
+async function installDependencies(destination: string): Promise<void> {
+  const manifest = join(destination, "package.json");
+  if (!(await exists(manifest))) {
+    // v5/v6 ship no manifest at all, so write the minimum their own imports require.
+    await writeFile(manifest, `${JSON.stringify({ name: "lifeos-staged", private: true, dependencies: { yaml: "^2.8.2" } }, null, 2)}\n`);
+  }
+  const proc = Bun.spawn(["bun", "install"], { cwd: destination, stdout: "pipe", stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  if (exitCode !== 0) throw new Error(`bun install failed in ${destination} (${exitCode}): ${stderr.trim()}`);
+  // Fail loud rather than stage another install whose hooks cannot start.
+  if (!(await exists(join(destination, "node_modules", "yaml")))) {
+    throw new Error(`bun install left no node_modules/yaml in ${destination}; hooks would die on tempdir`);
+  }
+}
+
 /** Run the upstream hook installer and fail if it leaves the staged config unenforced. */
 async function installUpstreamHooks(destination: string, payload: string): Promise<void> {
   const skillRoot = join(payload, "..");
@@ -215,6 +248,14 @@ async function stageUpstream(version: string, destination: string): Promise<void
   if (spec.template) await activateIdentityImports(destination, payload);
   await substitutePersonaTokens(destination);
   if (spec.template) await installUpstreamHooks(destination, payload);
+  // After the hooks are registered: a registered hook that cannot resolve its imports is worse
+  // than no hook, because it looks installed and silently does nothing.
+  //
+  // Gated on hooks EXISTING, not on `spec.template` — v5 has no template but ships 34 hooks and
+  // imports `yaml` from 14 of its own files. It happened to survive the golden set without
+  // reaching one; that is luck, not a property worth depending on. RAW has no hooks and is left
+  // bare on purpose: it is the control.
+  if (await exists(join(destination, "hooks"))) await installDependencies(destination);
   await assertScrubbed(destination);
 }
 
