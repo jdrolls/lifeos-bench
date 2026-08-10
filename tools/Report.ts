@@ -42,6 +42,27 @@ async function main() {
   for (const version of config.versions) for (const model of lanes(version)) { const metric = await metrics(version.id, model.id); lines.push(`| ${version.id} | ${model.id} | ${metric.routing} | ${metric.format} | ${metric.atK} | ${metric.allK} | ${metric.tokens} | ${metric.wall} |`); }
   lines.push("", "## Per-tier breakdown", "", "| Version | Model | Tier | Routing-correct | Format | Task pass@k | Task pass^k |", "|---|---|---|---:|---:|---:|---:|");
   for (const version of config.versions) for (const model of lanes(version)) for (const tier of Object.keys(config.trials)) { const metric = await metrics(version.id, model.id, tier); lines.push(`| ${version.id} | ${model.id} | ${tier} | ${metric.routing} | ${metric.format} | ${metric.atK} | ${metric.allK} |`); }
+  // Emitted with every report, not just kept in the docs: the routing column for the
+  // hook-routed versions is not a measurement of those scaffolds, and a reader who sees only
+  // this file must not read it as one.
+  lines.push("", "## Known limitations — read before quoting any number", "",
+    "**Routing is not measurable for L6/L7 here.** Both route through an LLM-backed classifier",
+    "hook. Claude Code spawns hook subprocesses with an EMPTY environment (measured from inside",
+    "the hook: `HOME=null, PATH=\"\"`), so the classifier's `spawn('claude')` fails with",
+    "\"Executable not found in $PATH\" and the router fail-safes to NATIVE on every prompt. The",
+    "classifier is correct when run standalone. So `algorithm_read` for L6/L7 measures *unrouted*",
+    "model behavior, not routing design — it is NOT a scaffold regression. L5 is unaffected: v5",
+    "routes via prose in CLAUDE.md, which spawns nothing. The same caveat applies to any L7",
+    "routing figure in the model sweep.",
+    "",
+    "**Single/double-trial cells are noisy.** Format compliance has been observed varying run to",
+    "run on an identical lane; headline claims need 5-trial confirmation.",
+    "",
+    "**The judge bar is permissive** (`min_score` 3 of 5, most scores 5), so task pass-rate has",
+    "weak power to separate versions.",
+    "",
+    "**Mean wall-clock is not comparable** across runs at concurrency > 1; cells contend for CPU.",
+    "Token counts, routing, format and pass-rates are unaffected.");
   const pending = rows.filter(row => row.status === "pending_judge"); lines.push("", "## Cells needing judge", ""); if (!pending.length) lines.push("None."); else { for (const row of pending) lines.push(`- ${row.version}/${row.model}/${row.prompt_id}/trial-${row.trial}: ${row.grader}`); }
   const output = path("results", "phase1", "REPORT.md"); await ensure(join(output, "..")); await writeFile(output, lines.join("\n") + "\n"); console.log(JSON.stringify({ report: output, grade_rows: rows.length, pending_judges: pending.length }));
 }
