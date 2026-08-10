@@ -146,7 +146,7 @@
     "concurrency": 4,
     "timeout_per_run_s": 1200,
     "isolation": "HOME redirected to sandboxes/_home/<VERSION> (fidelity) + sandbox-exec seatbelt denying the operator home (safety) + LeakCheck marking escapes contaminated (validity)",
-    "concurrency_note": "Cells are independent (per-cell workspace, seatbelt profile and results dir; the staged config root is not written at runtime), so >1 is safe for correctness. It is NOT neutral for latency: concurrent cells contend for CPU, so mean wall-clock is inflated and not comparable to a serial run. Token counts, routing, format compliance and task pass-rates are unaffected. Treat wall-clock as indicative only for any run with concurrency > 1."
+    "concurrency_note": "Cells are independent (per-cell workspace, HOME, seatbelt profile and results dir), so >1 is safe for correctness. The per-cell HOME is load-bearing, not belt-and-braces: this note previously justified itself with 'the staged config root is not written at runtime', which stopped being true the moment the scaffolds' hooks could run — they write state into $HOME/.claude, and a shared staged home made every cell depend on the one before it and race the ones beside it. Each cell now clones the staged tree, and the seatbelt grants the template no write access. It is NOT neutral for latency: concurrent cells contend for CPU, so mean wall-clock is inflated and not comparable to a serial run. Token counts, routing, format compliance and task pass-rates are unaffected. Treat wall-clock as indicative only for any run with concurrency > 1."
   },
   "claudex": {
     "note": "GPT through the SAME CC harness via claudex (ChatGPT-auth wrapper) so hooks fire identically \u2014 this isolates prompts-vs-plumbing.",
