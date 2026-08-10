@@ -133,3 +133,44 @@ describe("refusal records", () => {
     expect(isRefusalRecord(line)).toBe(true);
   });
 });
+
+/**
+ * Regression: a model can NAME an absolute path it never reads. `gpt-5.6-luna` invented
+ * `/Users/placeholder/.claude/LIFEOS/ALGORITHM/LATEST` — a file that exists on no machine — issued
+ * a Read for it, got `is_error: true`, and the cell was marked contaminated for spelling a path.
+ * Since a report is withheld on any contaminated cell, one hallucinated path blocks a whole fleet.
+ *
+ * The exemption covers only the failed REQUEST. A successful read returns content in its
+ * `tool_result`, which is a separate line and stays strictly scanned.
+ */
+describe("failed tool calls", () => {
+  const request = (id: string, filePath: string) =>
+    `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "Read", input: { file_path: filePath } }] } })}\n`;
+  const result = (id: string, isError: boolean, content: string) =>
+    `${JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content }] } })}\n`;
+
+  test("a read that errored is not an escape", async () => {
+    const directory = await artifactDir({
+      "transcript.jsonl":
+        request("call_a", "/Users/placeholder/.claude/LIFEOS/ALGORITHM/LATEST") +
+        result("call_a", true, "File does not exist."),
+    });
+    expect(await leakCheck(directory)).toEqual([]);
+  });
+
+  test("a read that SUCCEEDED is still an escape", async () => {
+    const directory = await artifactDir({
+      "transcript.jsonl":
+        request("call_b", "/Users/operator/.claude/CLAUDE.md") +
+        result("call_b", false, "# real contents"),
+    });
+    const violations = await leakCheck(directory);
+    expect(violations.length).toBeGreaterThan(0);
+    expect(violations[0].kind).toBe("escape");
+  });
+
+  test("a hook's own tool-failure log is exempt by its error text", () => {
+    const line = '{"event":"tool_failure","error":"File does not exist.","tool_input_preview":"{\\"file_path\\":\\"/Users/placeholder/.claude/X\\"}"}';
+    expect(isRefusalRecord(line)).toBe(true);
+  });
+});

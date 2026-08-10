@@ -79,23 +79,60 @@ const repoPaths = new RegExp(`${repoRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}
  * Identity-token hits are NOT exempted. A refused read cannot return the operator's name, so a
  * name appearing next to a denial came from somewhere else and is still a genuine signal.
  */
-const DENIAL_MARKERS = /Operation not permitted|Permission denied|EPERM|EACCES|deny\(\d+\)|sandbox(?:-exec)?:|Sandbox: deny/i;
+const DENIAL_MARKERS = /Operation not permitted|Permission denied|EPERM|EACCES|deny\(\d+\)|sandbox(?:-exec)?:|Sandbox: deny|File does not exist|No such file or directory|ENOENT/i;
 
 export function isRefusalRecord(line: string): boolean {
   return DENIAL_MARKERS.test(line);
+}
+
+/**
+ * Tool calls whose result came back an error — so the call returned no file content.
+ *
+ * A model can name an absolute path it never reads. `gpt-5.6-luna` invented
+ * `/Users/placeholder/.claude/LIFEOS/ALGORITHM/LATEST` and issued a Read for it; the file exists
+ * on no machine, the call returned `is_error: true`, and the cell was marked contaminated for
+ * spelling a path. The boundary was never touched — but a report is withheld on any contaminated
+ * cell, so a hallucinated path can block the whole fleet.
+ *
+ * Same safe-by-construction argument as the kernel-refusal exemption: a read that SUCCEEDS returns
+ * content in its `tool_result`, which is a different line and is still scanned strictly, and
+ * identity tokens are never exempted anywhere. Only the REQUEST is exempted, only when its own
+ * result says it failed. Deliberately outcome-based rather than existence-based: checking whether
+ * the path exists on disk would make the verdict depend on which machine runs the scan, which
+ * would silently disable this detector for everyone but the operator.
+ */
+export function failedToolUseIds(content: string): Set<string> {
+  const failed = new Set<string>();
+  if (!content.includes('"tool_result"')) return failed;
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.includes('"tool_result"')) continue;
+    let event: unknown;
+    try { event = JSON.parse(line); } catch { continue; }
+    const blocks = (event as { message?: { content?: unknown } })?.message?.content;
+    if (!Array.isArray(blocks)) continue;
+    for (const block of blocks) {
+      const entry = block as { type?: string; is_error?: boolean; tool_use_id?: string };
+      if (entry?.type === "tool_result" && entry.is_error === true && typeof entry.tool_use_id === "string") {
+        failed.add(entry.tool_use_id);
+      }
+    }
+  }
+  return failed;
 }
 
 function scan(content: string, relativeFile: string): Violation[] {
   const found: Violation[] = [];
   const lines = content.split(/\r?\n/);
   const tokens = REAL_IDENTITY_TOKENS.map((parts) => parts.join(""));
+  const failedCalls = failedToolUseIds(content);
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index].replace(repoPaths, "<BENCH>");
     for (const token of tokens) {
       if (line.includes(token)) found.push({ file: relativeFile, kind: "identity", marker: token, line: index + 1 });
     }
-    // Escape patterns only — see isRefusalRecord. Identity tokens above stay strict.
-    if (!isRefusalRecord(line)) {
+    // Escape patterns only — see isRefusalRecord and failedToolUseIds. Identity tokens stay strict.
+    const attemptFailed = isRefusalRecord(line) || [...failedCalls].some((id) => line.includes(id));
+    if (!attemptFailed) {
       for (const pattern of ESCAPE_PATTERNS) {
         const match = line.match(pattern);
         if (match) found.push({ file: relativeFile, kind: "escape", marker: match[0], line: index + 1 });
