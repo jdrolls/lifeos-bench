@@ -38,9 +38,16 @@ Three mechanisms, because they solve different problems:
 
 | Concern | Mechanism |
 |---|---|
-| **Fidelity** | `$HOME` → `sandboxes/_home/<VERSION>`, with the staged install physically at `<HOME>/.claude` so upstream's cross-root relative imports (`../../../.claude/...`) resolve |
+| **Fidelity** | `$HOME` → a per-cell clone of `sandboxes/_home/<VERSION>`, with the staged install physically at `<HOME>/.claude` so upstream's cross-root relative imports (`../../../.claude/...`) resolve |
+| **Independence** | the staged tree is a **template**: every cell clones it and the seatbelt grants the template no write access, so a scaffold's hooks cannot carry state into the next cell |
 | **Safety** | `sandbox-exec` seatbelt denying the operator's home; the child environment is scrubbed of operator paths and ephemeral session shims |
 | **Validity** | `LeakCheck` marks any escape `contaminated`; a dirty fleet does **not** get a report |
+
+Cells run with their cwd and their `$HOME` outside the operator home — required, not tidy: a Bun
+process whose cwd sits inside the seatbelt's denied subtree starts with an empty `process.env`, and
+every scaffold hook is `#!/usr/bin/env bun`. Each cell records what its hooks wrote
+(`home-writes.txt`, `home-state/`, `meta.hook_state`), so "did the enforcement layer actually run"
+is answerable from the artifacts rather than by re-probing the machine.
 
 Persona is Bruce Wayne / Alfred — disjoint from the operator by construction, which makes the
 operator's own identifiers a continuous tripwire. Nothing credential-bearing is placed in a
@@ -95,9 +102,22 @@ rescued by raising the ceiling.
 > L6 67/68, L7 210/212 — RAW 0/212**, because RAW registers no hooks. So Phase 4 measured the
 > *prompt-and-context* half of each scaffold (system prompt, `CLAUDE.md`, imports — all CLI flags
 > and file reads, all working) with the *enforcement* half switched off. For a framework whose
-> founding principles include "code before prompts", that understates it. The harness is fixed
-> (`Sandbox.runWorkspace`); L5/L6/L7 need re-running before any version claim is quoted. RAW-only
-> figures are unaffected.
+> founding principles include "code before prompts", that understates it. L5/L6/L7 are being
+> re-run; RAW-only figures are unaffected.
+
+> **Turning the hooks on took three fixes, not one, and the first two each hid the next.**
+> (1) the cwd/`process.env` fault above (`Sandbox.runWorkspace`); (2) no `node_modules` in any
+> staged install, so hooks importing `yaml` died on `bun is unable to write files to tempdir`
+> (`StageVersion.installDependencies`); (3) with hooks finally running, they wrote their state back
+> into the **shared** staged install — L7 put 29 files there per cell, v5 rewrote the staged
+> `settings.json` itself — making each cell depend on the one before it. Every cell now clones its
+> own `$HOME` (`Sandbox.prepareCellHome`). Nothing before fix 3 is a valid scaffolded measurement.
+>
+> **RAW's Phase 4 figures survive fix 3**, on the argument that a version registering no hooks has
+> nothing that writes to `$HOME` at runtime: what the shared home accumulated for RAW was Claude
+> Code's own bookkeeping (`.claude.json`, per-cwd `projects/` session logs, telemetry caches), and
+> each cell already had a unique cwd, so no session was ever resumed into another cell. The
+> scaffolded lanes had no such argument — their hooks demonstrably wrote context-bearing state.
 
 Findings — (1) and (3) span all eight models; (2) is the version bisect, which runs on the two
 bisect models by design:
@@ -132,6 +152,19 @@ Read these before quoting any number.
   *unrouted* model behavior and must not be reported as a regression. L5 is unaffected: v5 routes
   via prose in `CLAUDE.md`, which spawns nothing. Read correctly, the L7 routing column
   (40% Claude / 100% GPT) is a finding about instruction-following without enforcement.
+- **Hooks that call an LLM cannot work in-sandbox, by choice.** v6's router and v5/v6/v7's
+  satisfaction-rating hooks spawn a nested `claude`. Claude Code passes no auth variable to hook
+  subprocesses and the sandbox `HOME` holds no credentials by design, so those hooks reach their
+  classifier and then fail authentication — visible verbatim in the captured state
+  (`ratings.jsonl`: `Inference failed: api error: claude JSON envelope is_error=true`). Deterministic
+  hooks are unaffected and do run; `format-gate.jsonl` records a real pass/fail per response.
+- **A fresh install of v6/v7 reports its own memory hooks as missing.** `MemoryHealthCheck` treats
+  `settings.system.json` as the source of truth, but upstream's `InstallHooks` merges
+  `install/hooks/hooks.json` into `settings.json` only, and the shipped `install/settings.system.json`
+  registers none of the memory hooks. So every scaffolded cell carries a
+  `🩺 MEMORY HEALTH: CRITICAL … NOT registered` banner into its context and often into its answer.
+  That is upstream behaviour faithfully reproduced, not a staging error — the hooks themselves are
+  registered and do run — but it consumes context and shows up in graded output.
 - **RAW is bare of LifeOS, not of all scaffolding.** The control still has Claude Code's bundled
   skills; one cell was observed invoking `dataviz` to build its page.
 - **Single- and double-trial cells are noisy.** Format compliance has been observed varying run to
@@ -144,7 +177,7 @@ Read these before quoting any number.
 
 ## Grader integrity
 
-Twelve harness and grader defects were found and fixed while building this, each with a regression
+Fifteen harness and grader defects were found and fixed while building this, each with a regression
 test. They are listed because a benchmark's credibility rests on how its own errors were caught,
 not on the absence of errors:
 
@@ -162,6 +195,9 @@ not on the absence of errors:
 | Cells leaked browser processes | Orphaned Chrome drove machine load to 13; inflated wall-clock and caused false "timeouts" |
 | `LeakCheck` counted a kernel refusal as an escape | Invalidated a cell whose boundary *held*, when Chrome's crashpad probed the operator's profile and was denied |
 | Cell cwd inside the seatbelt's denied home | Emptied `process.env` for **every** Bun hook, disabling v6's router and producing a routing result that was really a harness artifact |
+| No `node_modules` in any staged install | Hooks import `yaml` from 13–14 of their own files; Bun's auto-install cannot write a tempdir inside the seatbelt, so the hook layer still could not start after the cwd fix |
+| Staged install **shared** by every cell in a lane | Hooks wrote context-bearing state (`drift-reminder.json`, `work.json`, `session-names.json`, and v5's own `settings.json`) into the tree the next cell loads — cross-cell coupling, and a race under `concurrency > 1` |
+| Hook-state capture copied vendored plugin docs | A bundled doc quoting `/Users/alice/.claude` landed in the graded artifact directory, where `LeakCheck` correctly read it as an escape and marked a clean cell `contaminated` |
 
 Two are worth singling out. **`workspace_diff_count`** was one-directional — only versions *with*
 hooks could be penalised — so it biased the benchmark toward its own null hypothesis. It was

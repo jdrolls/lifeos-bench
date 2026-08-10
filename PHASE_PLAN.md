@@ -272,6 +272,12 @@ is confirmation work.
    received the persona, so `grounding_quality` was graded against materials the judge could not
    see — two cells citing the identical real fact got opposite verdicts. `Judge.ts` now supplies
    it; the old rows must be dropped from `judge-grades.jsonl` and re-judged.
+
+   Status 2026-08-10: the scaffolded lanes' judge rows are already gone (their cells are being
+   re-run, so they will be judged fresh). What remains is RAW's 20 T5 rows. `Judge.ts` gained the
+   persona in `dfea7a3` (2026-08-09 17:42) and the file was last written 2026-08-10 06:11, but rows
+   carry no timestamp, so "written after the fix" cannot be proven per row — **drop RAW's 20 T5 rows
+   and re-judge them with the rest.** Twenty judge calls is cheaper than an unresolvable asterisk.
 3. ~~**Decide the Chrome-denial contamination semantics.**~~ **Done 2026-08-10 — narrowed.**
    `LeakCheck` now exempts an escape-pattern hit when the SAME line carries an explicit refusal
    marker (`Operation not permitted`, `deny(1)`, `EPERM`, …). Safe by construction: a successful
@@ -282,6 +288,46 @@ is confirmation work.
 4. **Re-run the scaffolded lanes first (348 cells).** Decided 2026-08-10; supersedes 5–7 in
    priority. Phase 4's L5/L6/L7 artifacts are archived under `_archive/prehooks-phase4-2026-08-10/`
    (with their judge rows) so Fleet re-runs them; RAW's 212 cells are untouched and still valid.
+
+   **Turning the hooks on took three fixes, not one — each of the first two hid the next.**
+   Fix 1 was the cwd/`process.env` fault (`Sandbox.runWorkspace`). Fix 2 was install completeness:
+   no staged install had `node_modules`, so any hook reaching `yaml` died on
+   `bun is unable to write files to tempdir` (`StageVersion.installDependencies`). Neither made the
+   layer work; they only exposed fix 3.
+
+   **Fix 3 — the staged home was shared, so hooks leaked state between cells** (found 2026-08-10,
+   on the first cells that ran with a working hook layer). Hooks write runtime state to
+   `$HOME/.claude/...`, and every cell in a lane pointed at the same staged tree. L7 wrote 29 files
+   there per cell — `drift-reminder.json`, `work.json`, `review-state.json`, `session-names.json`,
+   all of which feed the next session's context — and v5's settings hooks rewrote the staged
+   `settings.json` itself, the file every later cell in that lane loads. Under `concurrency: 4` they
+   also raced for those files. This falsified the independence claim `bench.config.json` makes to
+   justify concurrency ("the staged config root is not written at runtime").
+
+   It hid behind a version difference: v6 resolves `LIFEOS_DIR="$HOME/…"` literally and drops a
+   per-cell `$HOME/` directory into the cwd (inert, and already handled by `Grade.isScaffoldState`),
+   while v7 patched that expansion (#1404) and therefore writes to the real — shared — home.
+
+   Every cell now clones the staged tree into its own `$HOME` (`Sandbox.prepareCellHome`, `cp -c`:
+   ~0.5s for 26MB, no extra disk), and the seatbelt no longer re-allows the template, so the blanket
+   operator-home deny refuses any write to it. Verified: L7 and L5 probe cells succeed with the
+   staged trees byte-identical afterwards. Each cell now also records what its hooks wrote
+   (`home-writes.txt`, `home-state/`, `meta.hook_state`) — 28 scaffold files for an L7 cell, 9 for
+   an L5 cell — so a dead hook layer is visible in the artifacts instead of needing a fresh probe.
+
+   **The re-run is 348 cells: L5 68 + L6 68 + L7 212.** L5's Phase-4 lane had already been re-run
+   once under fixes 1-and-not-2; scanning all 68 of those transcripts found zero `tempdir` and zero
+   module-resolution failures, which confirms the "v5 never reaches a `yaml` import" hypothesis was
+   right — but they were archived and re-run anyway (`_archive/nodeps-rerun-2026-08-10/`) so all
+   three scaffolded lanes share one staging provenance. The nine cells run under the shared home are
+   archived as evidence in `_archive/sharedhome-2026-08-10/`.
+
+   **RAW's 212 Phase 4 cells are retained**, on an argument that must be stated rather than assumed:
+   a version that registers no hooks has nothing writing to `$HOME` at runtime, so what RAW's shared
+   home accumulated was Claude Code's own bookkeeping (`.claude.json`, per-cwd `projects/` session
+   logs, telemetry caches), and every cell already had a unique cwd, so no session was resumed into
+   another cell. If that argument is ever doubted, the fix is to re-run RAW (212 cells), not to
+   hedge the number.
 
 5. **5-trial confirmation** on every cell a headline rests on. Priority order from observed
    variance: `routed_heavy` (L5/terra 2/2 vs L5/sonnet 0/2 on the same scaffold), then format
@@ -298,8 +344,17 @@ is confirmation work.
 - **The #1715 write-up.** Methods, findings, and an explicit account of what Phases 1–3 got
   wrong and how it was caught — the correction is more credible than the result.
 - **Upstream bug reports:** the macOS file case-collision (`ISAReconcile.ts` /
-  `IsaReconcile.ts`, present in both v6 and v7); and that `LATEST` holds a bare version while
-  the file carries a `v` prefix, which silently breaks any `@`-import built from it.
+  `IsaReconcile.ts`, present in both v6 and v7); that `LATEST` holds a bare version while
+  the file carries a `v` prefix, which silently breaks any `@`-import built from it; and the
+  **memory-health false alarm** — `MemoryHealthCheck` treats `settings.system.json` as the source
+  of truth while `InstallHooks` merges `install/hooks/hooks.json` into `settings.json` only, and the
+  shipped `install/settings.system.json` registers none of the memory hooks. A fresh v6/v7 install
+  therefore reports its own (correctly registered, actually running) hooks as missing, and the
+  `🩺 MEMORY HEALTH: CRITICAL` banner reaches the model's context and its answers. Affects both
+  versions; observed in every scaffolded cell.
+- **Also worth reporting, lower severity:** the tab-setter hook shells out to `cmux` unconditionally
+  and logs a stack trace when it is absent or has no session — noise on every hook invocation in any
+  environment without it.
 - **Repo publication gate:** the repo is private pending review. Before it goes public again,
   re-run `LeakCheck` over the full tree, confirm no transcript names a real person, and get
   a decision on the DC-trademark persona.
