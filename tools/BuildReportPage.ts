@@ -375,7 +375,7 @@ async function defectTable(): Promise<string> {
   return `<h3>Recorded defects</h3>${table(fields, records.map((item) => fields.map((field) => typeof item[field] === "object" ? JSON.stringify(item[field]) : item[field])), true)}`;
 }
 
-export async function renderReportPage(data: ReportData, sections: ReportSection[]): Promise<string> {
+export async function renderReportPage(data: ReportData, sections: ReportSection[]): Promise<{ standalone: string; fragment: string }> {
   const matrix = table(["Version", ...data.generated.models], data.generated.versions.map((version) => [version, ...data.generated.models.map((model) => data.lanes.some((lane) => lane.version === version && lane.model === model) ? "run" : "—")]));
   const trials = table(["Tier", "Trials", "Models"], Object.entries(data.generated.trials).map(([tier, trial]) => [tier, trial, data.generated.tier_models[tier]?.join(", ") ?? "all lane models"]));
   const runTiles = `<div class="tiles"><div><b>${data.run.cells_total}</b><span>recorded cells</span></div><div><b>${data.run.statuses.success ?? 0}</b><span>successful cells</span></div><div><b>$${data.run.cost_usd_total}</b><span>recorded cost</span></div><div><b>${data.run.wall_clock_total_h} h</b><span>recorded wall-clock</span></div></div>`;
@@ -394,12 +394,56 @@ export async function renderReportPage(data: ReportData, sections: ReportSection
   const laneTable = table(laneHeaders, data.lanes.map((lane) => [lane.version, lane.model, lane.task_prompts, lane.routing_pct, lane.format_pct, lane.task_at_k_pct, lane.task_all_k_pct, lane.cells, lane.output_tokens_mean, lane.wall_clock_mean_s, lane.cost_usd_total, lane.hook_files_mean, statusText(lane.statuses)]));
   const tierTable = table(["Version", "Model", "Tier", "Prompts", "Routing %", "Format %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD", "Hook files mean", "Statuses"], data.tiers.map((tier) => [tier.version, tier.model, tier.tier, tier.task_prompts, tier.routing_pct, tier.format_pct, tier.task_at_k_pct, tier.task_all_k_pct, tier.cells, tier.output_tokens_mean, tier.wall_clock_mean_s, tier.cost_usd_total, tier.hook_files_mean, statusText(tier.statuses)]));
   const defects = await defectTable();
-  const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>lifeos-bench — scaffolding benchmark report</title><style>
-:root { --bg:#f6f7fb; --surface:#ffffff; --text:#172033; --muted:#536076; --border:#cbd3e1; --accent:#315bb8; --accent-soft:#e6edff; --series-1:#315bb8; --series-2:#c1504d; --series-3:#43865b; --series-4:#9b6a19; --grid:#d9dfeb; --shadow:0 0.25rem 1rem rgb(23 32 51 / 8%); }
-@media (prefers-color-scheme: dark) { :root { --bg:#111724; --surface:#1b2434; --text:#edf2fc; --muted:#b4c0d4; --border:#3a4961; --accent:#9ab9ff; --accent-soft:#21365f; --series-1:#9ab9ff; --series-2:#ffaaa3; --series-3:#8cd4a1; --series-4:#f0c56e; --grid:#3a4961; --shadow:0 0.25rem 1rem rgb(0 0 0 / 25%); } }
-* { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font:1rem/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; overflow-x:hidden; } main { width:min(100% - 2rem, 78rem); margin:0 auto; } header { padding:3rem 0 1.5rem; } h1 { margin:0; font-size:clamp(1.8rem,5vw,3.2rem); line-height:1.1; } h2 { margin-top:0; } h3 { margin-top:1.5rem; } section { margin:1.25rem 0; padding:clamp(1rem,3vw,2rem); background:var(--surface); border:1px solid var(--border); border-radius:.75rem; box-shadow:var(--shadow); } .narrative { max-width:74ch; } .table-wrap { max-width:100%; overflow-x:auto; margin:1rem 0; } table { width:100%; border-collapse:collapse; font-size:.9rem; } th,td { padding:.55rem .65rem; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; white-space:nowrap; } .prose th,.prose td { white-space:normal; } .prose td:last-child { min-width:22rem; } th { color:var(--muted); } .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(9rem,1fr)); gap:.75rem; margin:1rem 0; } .tiles div { padding:1rem; border-radius:.5rem; background:var(--accent-soft); } .tiles b,.tiles span { display:block; } .tiles b { font-size:1.45rem; } .tiles span { color:var(--muted); font-size:.85rem; } svg { display:block; max-width:100%; margin:1rem 0 2rem; color:var(--muted); } .chart-grid line { stroke:var(--grid); stroke-width:1; } .chart-axis { stroke:var(--muted); stroke-width:1; } svg text { fill:var(--muted); font:11px system-ui,sans-serif; } svg .chart-value { fill:var(--text); font-size:10px; } svg .chart-label { font-size:10px; } a { color:var(--accent); } code { padding:.1em .25em; background:var(--accent-soft); border-radius:.2em; } blockquote { border-left:.25rem solid var(--accent); margin-left:0; padding-left:1rem; color:var(--muted); } footer { color:var(--muted); padding:1rem 0 3rem; font-size:.85rem; } @media (max-width:38rem) { main { width:min(100% - 1rem,78rem); } section { border-radius:.5rem; } svg { margin-left:0; } }
-</style></head><body><main><header><h1>Scaffolding benchmark report</h1><p>Frozen golden set ${escapeHtml(data.generated.golden_set)} · aggregate results only</p></header>
+  // Three theme states, not two. An explicit viewer choice stamps data-theme on the root; the
+  // default "system" setting stamps nothing, so only prefers-color-scheme separates the two
+  // there. Every colour is defined on bare :root and only REDEFINED in the other two blocks —
+  // a colour whose sole definition sits behind a media query never applies in the unstamped
+  // state, which is how a page ends up rendering one theme's text on the other theme's ground.
+  const dark = "--bg:#111724; --surface:#1b2434; --text:#edf2fc; --muted:#b4c0d4; --border:#3a4961; --accent:#9ab9ff; --accent-soft:#21365f; --series-1:#9ab9ff; --series-2:#ffaaa3; --series-3:#8cd4a1; --series-4:#f0c56e; --grid:#3a4961; --shadow:0 0.25rem 1rem rgb(0 0 0 / 35%);";
+  const style = `<style>
+:root { --bg:#f5f7fa; --surface:#ffffff; --text:#151d2b; --muted:#4f5d73; --border:#c9d2e0; --accent:#2f56ad; --accent-soft:#e7edfb; --series-1:#2f56ad; --series-2:#b04a47; --series-3:#3d7f56; --series-4:#8f6417; --grid:#dae0ea; --shadow:0 0.25rem 1rem rgb(21 29 43 / 7%);
+  --display: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  --body: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --data: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { ${dark} } }
+:root[data-theme="dark"] { ${dark} }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:1rem/1.6 var(--body); overflow-x:hidden; }
+main { width:min(100% - 2rem, 78rem); margin:0 auto; }
+header { padding:3.5rem 0 1.5rem; }
+h1 { margin:0 0 .5rem; font-family:var(--display); font-weight:600; font-size:clamp(1.9rem,5vw,3.1rem); line-height:1.08; letter-spacing:-0.015em; text-wrap:balance; }
+header p { margin:0; color:var(--muted); font-size:.95rem; }
+h2 { margin:0 0 .75rem; font-family:var(--display); font-weight:600; font-size:clamp(1.3rem,3vw,1.75rem); line-height:1.2; text-wrap:balance; }
+h3 { margin:1.75rem 0 .5rem; font-size:1.02rem; font-weight:650; text-wrap:balance; }
+p { margin:0 0 .9rem; } li { margin-bottom:.35rem; }
+section { display:flex; flex-direction:column; margin:1.25rem 0; padding:clamp(1.1rem,3vw,2.25rem); background:var(--surface); border:1px solid var(--border); border-radius:.6rem; box-shadow:var(--shadow); }
+.narrative { max-width:70ch; }
+.table-wrap { max-width:100%; overflow-x:auto; margin:.75rem 0 1.25rem; }
+table { width:100%; border-collapse:collapse; font-size:.88rem; font-variant-numeric:tabular-nums; }
+th,td { padding:.5rem .7rem; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; white-space:nowrap; }
+th { color:var(--muted); font-weight:600; font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; }
+td { font-family:var(--data); font-size:.83rem; }
+.prose th,.prose td { white-space:normal; } .prose td { font-family:var(--body); font-size:.88rem; } .prose td:last-child { min-width:22rem; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(9rem,1fr)); gap:.75rem; margin:.5rem 0 1rem; }
+.tiles div { padding:1rem; border-radius:.4rem; background:var(--accent-soft); }
+.tiles b,.tiles span { display:block; }
+.tiles b { font-family:var(--data); font-size:1.5rem; font-variant-numeric:tabular-nums; letter-spacing:-0.02em; }
+.tiles span { color:var(--muted); font-size:.8rem; }
+svg { display:block; max-width:100%; margin:.75rem 0 2rem; }
+.chart-grid line { stroke:var(--grid); stroke-width:1; }
+.chart-axis { stroke:var(--muted); stroke-width:1; }
+svg text { fill:var(--muted); font:11px var(--data); }
+svg .chart-value { fill:var(--text); font-size:10px; }
+svg .chart-label { font-size:10px; font-family:var(--body); }
+svg .chart-legend { font-family:var(--body); }
+a { color:var(--accent); }
+a:focus-visible, :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+code { padding:.1em .3em; font-family:var(--data); font-size:.88em; background:var(--accent-soft); border-radius:.2em; }
+blockquote { border-left:.2rem solid var(--accent); margin-left:0; padding-left:1rem; color:var(--muted); }
+footer { color:var(--muted); padding:1rem 0 3rem; font-size:.82rem; }
+@media (max-width:38rem) { main { width:min(100% - 1rem,78rem); } section { border-radius:.4rem; } }
+</style>`;
+  const body = `<main><header><h1>Does the scaffolding actually help?</h1><p>An A/B benchmark of three released framework versions against a bare control · frozen golden set ${escapeHtml(data.generated.golden_set)} · aggregate results only</p></header>
 <section id="question">${narrative(sections, "question")}</section>
 <section id="method">${narrative(sections, "method")}<h3>Configured lane matrix</h3>${matrix}<h3>Trials by tier</h3>${trials}</section>
 <section id="run">${narrative(sections, "run")}${runTiles}<h3>Recorded cells by version</h3>${versionRuns}</section>
@@ -408,12 +452,19 @@ export async function renderReportPage(data: ReportData, sections: ReportSection
 ${defects ? `<section id="corrections">${narrative(sections, "corrections")}${defects}</section>` : `<section id="corrections">${narrative(sections, "corrections")}</section>`}
 <section id="limitations">${narrative(sections, "limitations")}</section>
 <section id="appendix">${narrative(sections, "appendix")}<h3>All lanes</h3>${laneTable}<h3>All scheduled tiers</h3>${tierTable}</section>
-<footer>Generated from the shared aggregate metric layer. No individual transcripts or workspaces are included.</footer></main></body></html>\n`;
+<footer>Every figure is regenerated from the recorded per-cell artifacts by one shared aggregation module. No individual transcripts or workspaces are included.</footer></main>`;
+  const title = "lifeos-bench — does the scaffolding actually help?";
+  const standalone = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>${style}</head><body>${body}</body></html>\n`;
+  // The Artifact host supplies its own document skeleton, so that variant carries the title,
+  // the styles and the content — and none of the wrapper tags, which would otherwise nest.
+  const fragment = `<title>${title}</title>\n${style}\n${body}\n`;
   // Narrative and defect notes are human-authored, so an operator path can reach the page through
   // prose. Fail loudly rather than redacting: a silent scrub turns a containment breach into a
   // cosmetic edit, and the whole point of the gate is that a breach is visible.
-  if (/\/Users\//.test(html)) throw new Error("report page contains an operator path — fix the source, not the output");
-  return html;
+  for (const output of [standalone, fragment]) {
+    if (/\/Users\//.test(output)) throw new Error("report page contains an operator path — fix the source, not the output");
+  }
+  return { standalone, fragment };
 }
 
 async function main(): Promise<void> {
@@ -423,8 +474,14 @@ async function main(): Promise<void> {
   const sections = await loadSections(join(docs, "report-sections.md"));
   const page = await renderReportPage(data, sections);
   await writeFile(join(docs, "report-data.json"), JSON.stringify(data, null, 2) + "\n", "utf8");
-  await writeFile(join(docs, "report.html"), page, "utf8");
-  console.log(JSON.stringify({ data: "docs/report-data.json", page: "docs/report.html", bytes: Buffer.byteLength(page) }));
+  await writeFile(join(docs, "report.html"), page.standalone, "utf8");
+  await writeFile(join(docs, "report-artifact.html"), page.fragment, "utf8");
+  console.log(JSON.stringify({
+    data: "docs/report-data.json",
+    page: "docs/report.html",
+    artifact: "docs/report-artifact.html",
+    bytes: Buffer.byteLength(page.standalone),
+  }));
 }
 
 if (import.meta.main) await main();
