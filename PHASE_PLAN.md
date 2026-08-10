@@ -97,59 +97,131 @@ cd ~/live/projects/lifeos-bench
 git pull
 bun tools/StageVersion.ts RAW --force   # and L5, L6, L7
 bun tools/Fleet.ts --dry-run | wc -l    # must print 560
-FLEET_START_EPOCH=$(date +%s) nohup tools/fleet-overnight.sh &
+
+# A wave is (versions x models). Waves B and C share versions, so --models is required
+# to separate them; --versions alone would run 424 cells instead of 136.
+FLEET_VERSIONS=L5,L6 FLEET_START_EPOCH=$(date +%s) nohup tools/fleet-overnight.sh &          # Wave A
+FLEET_VERSIONS=RAW,L7 FLEET_MODELS=sonnet-5,gpt-5.6-terra ... nohup tools/fleet-overnight.sh & # Wave B
+FLEET_VERSIONS=RAW,L7 FLEET_MODELS=fable-5,haiku-4-5,gpt-5.6-luna,gpt-5.6-sol,opus-5,opus-4-8 \
+  FLEET_START_EPOCH=$(date +%s) nohup tools/fleet-overnight.sh &                              # Wave C
 ```
 
 Claudex lanes (terra/luna/sol) additionally need CLIProxyAPI up on `:8317` and signed in.
 
+Re-running the same command after a wave is the resume sweep: `Fleet.ts` skips cells whose
+`meta.json` says `success` and retries everything else, so stragglers need no special handling.
+
 ### After the runs
 
+Cross-vendor blinding needs one pass per vendor — `JUDGE_CMD` is a single template, so
+`--model` selects which cells each judge sees.
+
 ```bash
-JUDGE_CMD='bun <CodexExec path> --model gpt-5.6-terra --prompt-file {promptfile}' bun tools/Judge.ts
+JUDGE_CMD='bun <CodexExec path> --model gpt-5.6-terra --prompt-file {promptfile}' \
+  bun tools/Judge.ts --model sonnet-5,fable-5,haiku-4-5,opus-5,opus-4-8   # Claude cells -> GPT
+JUDGE_CMD='bash tools/claude-judge.sh {promptfile}' \
+  bun tools/Judge.ts --model gpt-5.6-terra,gpt-5.6-luna,gpt-5.6-sol       # GPT cells -> Claude
 bun tools/Report.ts
 ```
+
+`tools/claude-judge.sh` runs the Claude judge with an empty config **and** a neutral cwd. Both
+are load-bearing: without them it loads the operator's real install and grades synthetic-persona
+answers against the operator's actual profile, failing correct answers as ungrounded.
 
 Judges stay blinded and cross-vendor: Claude-family cells judged by GPT, GPT cells by Claude.
 `scrubResponse` strips banner lines before the judge sees anything; its `BLINDING_MARKERS`
 already covers `═══`, `LifeOS`, `♻`, and the `🗣️` closer, so v5/v6/v7 formats are all
 stripped. Re-check it if any version's banner changes.
 
-### Wave A + B results (run 2026-08-09)
+## Phase 4 results — all three waves (run 2026-08-09)
 
-272/272 cells `success`, containment clean, all rubrics judged cross-vendor. Numbers in
-`results/phase1/REPORT.md`. Six harness/grader defects were found and fixed mid-run; the
-per-defect list is in `README.md` → Grader integrity.
+**560/560 cells run, 559 `success`, containment clean, zero pending judges.** Numbers in
+`results/phase1/REPORT.md`. The single failure is `RAW/opus-5/t4-casual-complex/trial-2`, a
+reproducible 1200s timeout (it failed twice, the second time on an idle machine) — recorded as a
+timeout rather than rescued by raising the ceiling mid-analysis.
 
-**The routing metric did not survive contact with the harness.** L6 and L7 route through an
-LLM-backed classifier hook (`TheRouter.hook.ts`). Verified: the hook *runs* inside cells, and the
-classifier returns a correct `MODE: ALGORITHM | TIER: E3` when invoked standalone — even under the
-seatbelt, in 5s against its own 35s timeout. But inside a cell it never delivers a decision (its
-cache is never written), because the hook subprocess receives no credentials: Claude Code does not
-export `CLAUDE_CODE_OAUTH_TOKEN` to hooks, and `RunCell` scrubs `ANTHROPIC_*` for billing hygiene,
-while upstream's `Inference.ts` deletes them too and spawns a bare `claude`. Ruled out along the
-way: hooks not firing headless (they fire), hook timeout (5s vs 35s), `CLAUDECODE` (upstream clears
-it), in-sandbox credentials, and an ephemeral `cmux` PATH shim.
+Eleven harness and grader defects were found and fixed during the run, each with a regression
+test; the per-defect list is in `README.md` → Grader integrity.
+
+### Q2 — does the scaffolding help? (RAW vs L7, pass@k)
+
+| Model | RAW | L7 | Δ |
+|---|---:|---:|---:|
+| sonnet-5 | 76.2 | 95.2 | **+19.0** |
+| opus-4-8 | 66.7 | 76.2 | **+9.5** |
+| haiku-4-5 | 66.7 | 71.4 | **+4.7** |
+| fable-5 · opus-5 · terra · luna · sol | — | — | 0.0 |
+
+Helps or is neutral on seven of eight models. On pass^k only `fable-5` declines (−4.8, one prompt).
+
+**Both retracted Phase 1–3 headlines fail on corrected data.** "Frontier models pass 100% bare"
+is gone — nothing exceeds 85.7% without a scaffold, so that ceiling was an artifact of the old
+prompt set, not a property of the models. "Small models get worse under scaffolding" does not
+reproduce either: Haiku 4.5 *gains* (+4.7 pass@k, +9.6 pass^k). It pays its cost in format
+compliance (66.7% vs 100% everywhere else), not in task success. The curve is diminishing
+returns toward current frontier, not an inverted U.
+
+Cost: L5 spends 7.7k–8.5k output tokens per cell; every other version runs 1.6k–4.1k for
+comparable or better pass-rates.
+
+### The routing metric did not survive contact with the harness
+
+L6 and L7 route through an LLM-backed classifier hook (`TheRouter.hook.ts`). It *runs* inside
+cells, and returns a correct `MODE: ALGORITHM | TIER: E3` when invoked standalone — even under the
+seatbelt, in 5s against its own 35s timeout. Inside a cell it never delivers a decision.
+
+**Root cause: Claude Code spawns hook subprocesses with an EMPTY environment.** Measured from
+inside the hook process: `{"HOME": null, "PATH": "", "CLAUDE_CONFIG_DIR": null}` — zero variables.
+`$HOME` is expanded in the *command string* (which is why the hook file is found at all) but
+nothing is passed through. With no `PATH`, upstream's `spawn('claude')` fails with
+`Executable not found in $PATH: "claude"`, the router fail-safes to NATIVE on every prompt, and
+the model never enters the Algorithm. The same cause explains the SessionEnd hooks that crash on
+`process.env.HOME!` — those were the visible edge of it, initially dismissed as cosmetic.
+
+Ruled out with direct probes, each: hooks not firing headless (a marker hook fires), hook timeout
+(5s vs 35s), `CLAUDECODE` (upstream clears it), credentials in-sandbox, `settings.env` injection,
+an ephemeral `cmux` PATH shim, seatbelt exec denial (`bun` and a nested `claude -p` both execute
+inside the profile), and a sandbox-local `bin/claude` shim verified first on PATH and runnable.
 
 Consequence: `algorithm_read` for L6/L7 measures **unrouted model behavior**, not routing design.
 Do not report "L6 never enters the Algorithm" as a scaffold regression. L5 is unaffected because
-v5 routes via prose in `CLAUDE.md` — no subprocess, nothing to authenticate. That asymmetry is
-itself the interesting result: prose routing survives an environment where hook-based routing
-cannot run.
+v5 routes via prose in `CLAUDE.md` — no subprocess, nothing to spawn. That asymmetry is itself the
+interesting result: prose routing survives an environment where hook-based routing cannot run.
 
-**Full isolation is the first Phase 5 task**, ahead of the 5-trial work. Until then L6/L7 routing
-numbers are harness-limited, and any L7 routing collected in Wave C carries the same caveat.
+What the L7 routing column *does* show, read correctly: 40% on every Claude model, 100% on all
+three GPT models. That is unrouted instruction-following — GPT models read the Algorithm because
+the system prompt says to; Claude models mostly do not.
 
 ## Phase 5 — hardening
 
-- **5-trial confirmation** on every cell a headline rests on. With one trial, format
-  compliance already varied run to run on the same lane — that variance is a finding, and it
-  means single-trial headline numbers are not publishable.
-- **Grader audit pass** on a sample of both passing and failing cells. This session found two
-  broken graders by auditing surprising numbers; assume more.
-- **Conditional bisect narrowing:** only if Q1 shows a cliff between two adjacent versions,
-  add intermediate tags, routing tiers only, sonnet only.
-- **Judge agreement check:** re-judge a sample with the alternate vendor and record
-  disagreement rather than averaging it.
+Ordered. (1) gates the routing half of the study; (2) and (3) are cheap and unblock T5; the rest
+is confirmation work.
+
+1. **Isolate the empty-hook-environment cause.** Everything L6/L7 routing rests on is blocked
+   behind this. Open leads: whether Claude Code passes hook env differently by invocation shape or
+   version; whether upstream's own `lifeos` launch command (Setup step 8.5) changes it; and
+   comparing against a real interactive session, where upstream's hooks demonstrably work — that
+   contrast is the strongest clue, since these hooks are not broken for real users.
+   Fallback if it proves unfixable: patch the staged `Inference.ts` to spawn an absolute binary
+   path. That modifies the artifact under test and must be declared loudly in the methods.
+2. **Re-judge the void T5 rows.** Every T5 verdict in Waves A/B was produced before the judge
+   received the persona, so `grounding_quality` was graded against materials the judge could not
+   see — two cells citing the identical real fact got opposite verdicts. `Judge.ts` now supplies
+   it; the old rows must be dropped from `judge-grades.jsonl` and re-judged.
+3. **Decide the Chrome-denial contamination semantics.** Cells that build a page launch real
+   Chrome, whose crashpad probes the operator's profile and is refused. `LeakCheck` counts that
+   denial as an escape, invalidating a cell whose boundary actually *held*. Either narrow the
+   detector to ignore explicit denial records, or keep the strict rule and accept the loss — but
+   decide deliberately rather than by default.
+4. **5-trial confirmation** on every cell a headline rests on. Priority order from observed
+   variance: `routed_heavy` (L5/terra 2/2 vs L5/sonnet 0/2 on the same scaffold), then format
+   compliance, then `algorithm_entered`.
+5. **Raise the judge's discriminative power.** `min_score` is 3 of 5 and ~68% of scores are 5s, so
+   task pass-rate separates versions weakly. Either raise the threshold or sharpen the rubrics.
+6. **Judge agreement check:** re-judge a sample with the alternate vendor and record disagreement
+   rather than averaging it.
+7. **Conditional bisect narrowing:** only if Q1 shows a cliff between two adjacent versions, add
+   intermediate tags, routing tiers only, sonnet only.
 
 ## Phase 6 — shipping
 

@@ -66,13 +66,16 @@ bun test                                   # 54 tests, 0 failures
 bun tools/StageVersion.ts L5 --force       # and L6, L7, RAW
 bun tools/Fleet.ts --dry-run | wc -l       # 560 = the full matrix
 
-# A wave is (versions x models); Waves B and C share versions and differ only by model.
+# A wave is (versions x models); Waves B and C share versions and differ only by model, so
+# --models is required to separate them. Re-running the same command is the resume sweep:
+# Fleet skips cells whose meta.json says "success" and retries everything else.
 FLEET_VERSIONS=L5,L6 FLEET_START_EPOCH=$(date +%s) nohup tools/fleet-overnight.sh &
 
-# After a wave, judge cross-vendor, then report:
+# After a wave, judge cross-vendor (one pass per vendor — JUDGE_CMD is a single template):
 JUDGE_CMD='bun <CodexExec> --model gpt-5.6-terra --prompt-file {promptfile}' \
-  bun tools/Judge.ts --model sonnet-5
-JUDGE_CMD='bash tools/claude-judge.sh {promptfile}' bun tools/Judge.ts --model gpt-5.6-terra
+  bun tools/Judge.ts --model sonnet-5,fable-5,haiku-4-5,opus-5,opus-4-8
+JUDGE_CMD='bash tools/claude-judge.sh {promptfile}' \
+  bun tools/Judge.ts --model gpt-5.6-terra,gpt-5.6-luna,gpt-5.6-sol
 bun tools/Report.ts
 ```
 
@@ -80,38 +83,52 @@ Claudex lanes additionally need CLIProxyAPI up on `:8317` and signed in.
 
 ## Status
 
-**Waves A and B complete — 272/272 cells `success`, containment clean, all rubrics judged.**
-Full numbers: [`results/phase1/REPORT.md`](results/phase1/REPORT.md). Wave C (288 cells, the
-remaining six models) is not yet run.
+**Phase 4 complete — all three waves. 560/560 cells run, 559 `success`, containment clean, zero
+pending judges.** Full numbers: [`results/phase1/REPORT.md`](results/phase1/REPORT.md). The one
+failure is `RAW/opus-5/t4-casual-complex/trial-2`, a reproducible 1200s timeout recorded as such
+rather than rescued by raising the ceiling.
 
-Findings so far, on the two bisect models:
+Findings — (1) and (3) span all eight models; (2) is the version bisect, which runs on the two
+bisect models by design:
 
-1. **Scaffolding beats the bare control on task pass-rate.** RAW 76–86% vs L5 100%, L6 95%,
-   L7 86–95% pass@k.
-2. **Format compliance improves monotonically.** L5 80% → L6 100% → L7 100%.
-3. **Cost varies sharply.** L5 spends 7.7k–8.5k output tokens per cell; L6/L7 spend 2.0k–3.1k
-   for comparable pass-rates.
+1. **The scaffolding helps or is neutral on seven of eight models.** RAW vs L7, pass@k:
+   sonnet-5 **+19.0**, opus-4-8 **+9.5**, haiku-4-5 **+4.7**, and 0.0 on fable-5, opus-5, terra,
+   luna and sol. On pass^k only fable-5 declines (−4.8, a single prompt).
+2. **Version comparison (2 bisect models).** L5 leads on task pass@k (100%) but spends 7.7k–8.5k
+   output tokens per cell; L6/L7 reach 95%/95% for 2.0k–3.8k. Format compliance improves
+   monotonically: L5 80% → L6 100% → L7 100%.
+3. **Both retracted Phase 1–3 headlines fail on corrected data.** No model passes 100% bare — RAW
+   spans 66.7–85.7% — so the ceiling that made scaffolding look pointless was an artifact of the
+   old prompt set. And "small models get worse under scaffolding" does not reproduce: Haiku 4.5
+   *gains* (+4.7 pass@k, +9.6 pass^k), paying its cost in format compliance (66.7% vs 100%
+   elsewhere) rather than in task success. The curve is diminishing returns toward current
+   frontier, not an inverted U.
 
 ## Known limitations
 
 Read these before quoting any number.
 
 - **Routing is not currently measurable for L6/L7.** Both route via an LLM-backed classifier hook.
-  The hook runs inside benchmark cells but never delivers a decision, because Claude Code does not
-  pass credentials to hook subprocesses and the harness scrubs API keys for billing hygiene. The
-  classifier works correctly when run standalone. So `algorithm_read` for L6/L7 measures *unrouted*
-  model behavior, not the scaffold's routing design — and must not be reported as a regression.
-  L5 is unaffected: v5 routes via prose in `CLAUDE.md`, which needs no subprocess.
+  Claude Code spawns hook subprocesses with an **empty environment** — measured from inside the
+  hook: `{"HOME": null, "PATH": "", "CLAUDE_CONFIG_DIR": null}`. With no `PATH`, upstream's
+  `spawn('claude')` fails and the router fail-safes to NATIVE on every prompt. The classifier is
+  correct when run standalone. So `algorithm_read` for L6/L7 measures *unrouted* model behavior,
+  not the scaffold's routing design — and must not be reported as a regression. L5 is unaffected:
+  v5 routes via prose in `CLAUDE.md`, which spawns nothing. Read correctly, the L7 routing column
+  (40% Claude / 100% GPT) is a finding about instruction-following without enforcement.
+- **RAW is bare of LifeOS, not of all scaffolding.** The control still has Claude Code's bundled
+  skills; one cell was observed invoking `dataviz` to build its page.
 - **Single- and double-trial cells are noisy.** Format compliance has been observed varying run to
   run on an identical lane. Headline claims need the Phase 5 five-trial confirmation.
-- **The judge bar is permissive.** `min_score` is 3 of 5 with most scores at 5, so task pass-rate
-  has weak power to separate versions.
-- **Wall-clock is not comparable across runs** at `concurrency > 1`; cells contend for CPU. Token
-  counts, routing, format and pass-rates are unaffected.
+- **The judge bar is permissive.** `min_score` is 3 of 5 with ~68% of scores at 5, so task
+  pass-rate has weak power to separate versions.
+- **Wall-clock is not comparable across runs** at `concurrency > 1`; cells contend for CPU. Wave C
+  timings recorded before the process reaper landed are additionally contended by leaked browser
+  processes. Token counts, routing, format and pass-rates are unaffected.
 
 ## Grader integrity
 
-Six harness and grader defects were found and fixed while building this, each with a regression
+Ten harness and grader defects were found and fixed while building this, each with a regression
 test. They are listed because a benchmark's credibility rests on how its own errors were caught,
 not on the absence of errors:
 
@@ -123,7 +140,13 @@ not on the absence of errors:
 | Real OAuth credentials reachable in-sandbox | Credential exposure under `bypassPermissions` |
 | `LeakCheck` patterns unanchored | Scaffold *documentation* scored as an escape |
 | `workspace_diff_count` counted hook state | Penalised only versions **with** hooks — silently favoured the control |
+| Claude-side judge not blinded | Graded synthetic-persona answers against the **operator's real profile** |
+| Judge prompt omitted the persona | T5 grounding judged against materials the judge could not see |
+| `Fleet`/`Judge` had no wave or vendor filter | Wave B would have run 424 cells; cross-vendor blinding was inexpressible |
+| Cells leaked browser processes | Orphaned Chrome drove machine load to 13; inflated wall-clock and caused false "timeouts" |
 
-The last one is the instructive case: it was one-directional, so it biased the benchmark toward
-its own null hypothesis. It was caught by auditing a result that looked too clean — the bare
-control beating a scaffold 4/4 to 0/4.
+Two are worth singling out. **`workspace_diff_count`** was one-directional — only versions *with*
+hooks could be penalised — so it biased the benchmark toward its own null hypothesis. It was
+caught by auditing a result that looked too clean: the bare control beating a scaffold 4/4 to 0/4.
+And **the unblinded judge** failed correct answers for citing the synthetic persona instead of the
+operator's real projects; the containment gate caught it, on the harness's own code.
