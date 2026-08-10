@@ -45,6 +45,34 @@ function terminateProcessGroup(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
+/**
+ * Kill anything the cell left running that still names its own trial directory.
+ *
+ * Killing the child's process group is not sufficient: cells building a page reach for a real
+ * browser to screenshot it, and headless Chrome detaches from the group and survives. Those
+ * orphans accumulated across a wave — four live Chrome trees and a background http.server at one
+ * point, with machine load at 13 on 8 cores. That is not just untidy: concurrent cells then
+ * contend for CPU and for fixed ports, which inflates wall-clock and plausibly produced the
+ * 1200s "timeouts" on cells that had made two tool calls.
+ *
+ * Matching on the trial directory is deliberately narrow — it can only ever match a process this
+ * cell started, never the operator's own browser, editor, or servers.
+ */
+async function reapEscapedProcesses(trialDirectory: string): Promise<void> {
+  try {
+    const listing = Bun.spawnSync(["ps", "-Ao", "pid=,command="]);
+    const lines = new TextDecoder().decode(listing.stdout).split("\n");
+    for (const line of lines) {
+      if (!line.includes(trialDirectory)) continue;
+      const pid = Number(line.trim().split(/\s+/)[0]);
+      if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) continue;
+      try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
+    }
+  } catch {
+    // Reaping is hygiene, never a reason to fail a completed cell.
+  }
+}
+
 async function main(): Promise<void> {
   const version = arg("--version");
   const model = arg("--model");
@@ -171,6 +199,8 @@ async function main(): Promise<void> {
     launchError = error instanceof Error ? error.message : String(error);
     stderr = `${stderr}${stderr ? "\n" : ""}${launchError}`;
   }
+
+  await reapEscapedProcesses(output);
 
   const transcript = stdout.length === 0 || stdout.endsWith("\n") ? stdout : `${stdout}\n`;
   await writeFile(join(output, "transcript.jsonl"), transcript);
