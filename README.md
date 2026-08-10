@@ -144,7 +144,7 @@ Read these before quoting any number.
 
 ## Grader integrity
 
-Eleven harness and grader defects were found and fixed while building this, each with a regression
+Twelve harness and grader defects were found and fixed while building this, each with a regression
 test. They are listed because a benchmark's credibility rests on how its own errors were caught,
 not on the absence of errors:
 
@@ -160,6 +160,7 @@ not on the absence of errors:
 | Judge prompt omitted the persona | T5 grounding judged against materials the judge could not see |
 | `Fleet`/`Judge` had no wave or vendor filter | Wave B would have run 424 cells; cross-vendor blinding was inexpressible |
 | Cells leaked browser processes | Orphaned Chrome drove machine load to 13; inflated wall-clock and caused false "timeouts" |
+| `LeakCheck` counted a kernel refusal as an escape | Invalidated a cell whose boundary *held*, when Chrome's crashpad probed the operator's profile and was denied |
 | Cell cwd inside the seatbelt's denied home | Emptied `process.env` for **every** Bun hook, disabling v6's router and producing a routing result that was really a harness artifact |
 
 Two are worth singling out. **`workspace_diff_count`** was one-directional — only versions *with*

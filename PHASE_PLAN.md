@@ -250,7 +250,9 @@ is confirmation work.
    breaking Bun whenever cwd sat inside the operator home; cells now run outside it. See the
    correction above. What remains is a decision, not an investigation:
 
-   **1a. Decide whether cells may hold a credential.** v6's router now reaches its classifier and
+   **1a. Credential decision — MADE 2026-08-10: credentials stay out.** Hook-based routing is a
+   permanent limitation of this method, reported as such rather than bought with a security
+   regression. The options were: v6's router now reaches its classifier and
    fails on authentication: Claude Code passes no auth variable to hooks, and the sandbox `HOME`
    holds none by design. Three options, all with real costs:
    - **Keep credentials out (status quo).** Hook-based routing is structurally unmeasurable here;
@@ -270,19 +272,25 @@ is confirmation work.
    received the persona, so `grounding_quality` was graded against materials the judge could not
    see — two cells citing the identical real fact got opposite verdicts. `Judge.ts` now supplies
    it; the old rows must be dropped from `judge-grades.jsonl` and re-judged.
-3. **Decide the Chrome-denial contamination semantics.** Cells that build a page launch real
-   Chrome, whose crashpad probes the operator's profile and is refused. `LeakCheck` counts that
-   denial as an escape, invalidating a cell whose boundary actually *held*. Either narrow the
-   detector to ignore explicit denial records, or keep the strict rule and accept the loss — but
-   decide deliberately rather than by default.
-4. **5-trial confirmation** on every cell a headline rests on. Priority order from observed
+3. ~~**Decide the Chrome-denial contamination semantics.**~~ **Done 2026-08-10 — narrowed.**
+   `LeakCheck` now exempts an escape-pattern hit when the SAME line carries an explicit refusal
+   marker (`Operation not permitted`, `deny(1)`, `EPERM`, …). Safe by construction: a successful
+   read produces no refusal marker, so no real escape can hide behind it, and identity tokens are
+   never exempted. Note the premise had thinned — only one cell was ever lost to this
+   (`RAW/gpt-5.6-sol/t4-casual-complex/trial-1`) and a retry cleared it, so the change is
+   insurance for the re-run rather than a fix for a live failure.
+4. **Re-run the scaffolded lanes first (348 cells).** Decided 2026-08-10; supersedes 5–7 in
+   priority. Phase 4's L5/L6/L7 artifacts are archived under `_archive/prehooks-phase4-2026-08-10/`
+   (with their judge rows) so Fleet re-runs them; RAW's 212 cells are untouched and still valid.
+
+5. **5-trial confirmation** on every cell a headline rests on. Priority order from observed
    variance: `routed_heavy` (L5/terra 2/2 vs L5/sonnet 0/2 on the same scaffold), then format
    compliance, then `algorithm_entered`.
-5. **Raise the judge's discriminative power.** `min_score` is 3 of 5 and ~68% of scores are 5s, so
+6. **Raise the judge's discriminative power.** `min_score` is 3 of 5 and ~68% of scores are 5s, so
    task pass-rate separates versions weakly. Either raise the threshold or sharpen the rubrics.
-6. **Judge agreement check:** re-judge a sample with the alternate vendor and record disagreement
+7. **Judge agreement check:** re-judge a sample with the alternate vendor and record disagreement
    rather than averaging it.
-7. **Conditional bisect narrowing:** only if Q1 shows a cliff between two adjacent versions, add
+8. **Conditional bisect narrowing:** only if Q1 shows a cliff between two adjacent versions, add
    intermediate tags, routing tiers only, sonnet only.
 
 ## Phase 6 — shipping

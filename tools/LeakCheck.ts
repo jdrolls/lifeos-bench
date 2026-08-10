@@ -63,6 +63,28 @@ export type Violation = { file: string; kind: "identity" | "escape"; marker: str
 const repoRoot = resolve(root);
 const repoPaths = new RegExp(`${repoRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^"'\\s,)]*`, "g");
 
+/**
+ * A kernel REFUSAL is evidence the boundary held, not evidence it failed.
+ *
+ * Cells that build a page launch real Chrome, whose crashpad probes the operator's browser
+ * profile. The seatbelt denies it, and the refusal names the path it refused — which the escape
+ * patterns then matched, invalidating a cell whose containment worked perfectly. One cell was
+ * lost to this (`RAW/gpt-5.6-sol/t4-casual-complex/trial-1`) before a retry cleared it.
+ *
+ * The exemption is deliberately narrow and safe by construction: it applies only when the SAME
+ * line also carries an explicit refusal marker. A successful read cannot produce one, so no real
+ * escape can hide behind this — a cell that actually read the operator's Chrome profile writes the
+ * path without any "Operation not permitted" beside it, and is still caught.
+ *
+ * Identity-token hits are NOT exempted. A refused read cannot return the operator's name, so a
+ * name appearing next to a denial came from somewhere else and is still a genuine signal.
+ */
+const DENIAL_MARKERS = /Operation not permitted|Permission denied|EPERM|EACCES|deny\(\d+\)|sandbox(?:-exec)?:|Sandbox: deny/i;
+
+export function isRefusalRecord(line: string): boolean {
+  return DENIAL_MARKERS.test(line);
+}
+
 function scan(content: string, relativeFile: string): Violation[] {
   const found: Violation[] = [];
   const lines = content.split(/\r?\n/);
@@ -72,9 +94,12 @@ function scan(content: string, relativeFile: string): Violation[] {
     for (const token of tokens) {
       if (line.includes(token)) found.push({ file: relativeFile, kind: "identity", marker: token, line: index + 1 });
     }
-    for (const pattern of ESCAPE_PATTERNS) {
-      const match = line.match(pattern);
-      if (match) found.push({ file: relativeFile, kind: "escape", marker: match[0], line: index + 1 });
+    // Escape patterns only — see isRefusalRecord. Identity tokens above stay strict.
+    if (!isRefusalRecord(line)) {
+      for (const pattern of ESCAPE_PATTERNS) {
+        const match = line.match(pattern);
+        if (match) found.push({ file: relativeFile, kind: "escape", marker: match[0], line: index + 1 });
+      }
     }
   }
   return found;
