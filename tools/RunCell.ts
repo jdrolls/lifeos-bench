@@ -108,8 +108,22 @@ export function isCapturedHomeState(relativePath: string): boolean {
   return !HOME_STATE_SKIP.test(relativePath);
 }
 
+/**
+ * v6 writes its hook state into a directory literally named `$HOME`, inside the cwd.
+ *
+ * Claude Code does not expand `$VAR` in settings.json `env` values, so `LIFEOS_DIR="$HOME/.claude/
+ * LIFEOS"` resolves to a relative path. v7 patched that (#1404) and writes to the real home; v5 and
+ * v6 do not. Counting only the real home would therefore report v6 as having written almost nothing
+ * — the exact "this lane's hooks are dead" signature this evidence exists to detect, produced by a
+ * lane whose hooks are fine. Both locations are the same behaviour and are counted as one.
+ */
+export function isLiteralHomeWrite(relativePath: string): boolean {
+  return /^\$\{?HOME\}?\//.test(relativePath);
+}
+
 async function captureHomeState(
   home: string,
+  workspace: string,
   output: string,
   startedAt: number,
 ): Promise<{ written: string[]; copied: number; truncated: boolean }> {
@@ -117,6 +131,10 @@ async function captureHomeState(
   let copied = 0;
   let total = 0;
   let truncated = false;
+  // Already copied back with the workspace, so these are listed for the count, not re-copied.
+  for (const relativePath of await files(workspace)) {
+    if (isLiteralHomeWrite(relativePath)) written.push(`workspace/${relativePath}`);
+  }
   for (const relativePath of await files(home)) {
     if (!isCapturedHomeState(relativePath)) continue;
     const absolute = join(home, relativePath);
@@ -294,7 +312,7 @@ async function main(): Promise<void> {
   // The cell's home is discarded, so whatever the hook layer wrote there has to be captured
   // first — it is the only direct evidence that the enforcement half of a scaffold actually
   // ran. Phase 4 shipped with that half silently dead and nothing in the artifacts said so.
-  const homeState = await captureHomeState(home, output, startedAt);
+  const homeState = await captureHomeState(home, workspace, output, startedAt);
 
   await rm(cellRoot, { recursive: true, force: true });
 

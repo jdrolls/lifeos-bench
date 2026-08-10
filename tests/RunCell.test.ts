@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isCapturedHomeState } from "../tools/RunCell.ts";
+import { isCapturedHomeState, isLiteralHomeWrite } from "../tools/RunCell.ts";
 
 /**
  * Regression: the per-cell HOME capture exists to prove a scaffold's hook layer ran. It is
@@ -41,5 +41,19 @@ describe("home-state capture", () => {
     ]) {
       expect(isCapturedHomeState(file)).toBe(false);
     }
+  });
+
+  /**
+   * v5/v6 write hook state to a literal `$HOME/` directory inside the cwd, because Claude Code does
+   * not expand `$VAR` in settings.json `env` values; v7 patched that (#1404) and writes to the real
+   * home. Counting only the real home would report v6 as having written almost nothing — which is
+   * precisely the "hooks are dead" signature this evidence exists to detect — for a lane whose
+   * hooks work fine.
+   */
+  test("counts the literal $HOME directory v5/v6 write into the workspace", () => {
+    expect(isLiteralHomeWrite("$HOME/.claude/LIFEOS/MEMORY/STATE/last-response.txt")).toBe(true);
+    expect(isLiteralHomeWrite("${HOME}/.claude/PAI/MEMORY/STATE/work.json")).toBe(true);
+    expect(isLiteralHomeWrite("src/scheduler.ts")).toBe(false);
+    expect(isLiteralHomeWrite("docs/$HOME-notes.md")).toBe(false);
   });
 });
