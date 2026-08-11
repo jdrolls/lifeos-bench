@@ -64,7 +64,7 @@ test("Fleet --versions selects only requested versions", async () => {
   const selected = selectCells(cells, config.versions.map((version: any) => version.id), "L5,L6", undefined);
 
   expect(selected).toEqual(cells.filter((cell) => cell.version === "L5" || cell.version === "L6"));
-  expect(selected).toHaveLength(136);
+  expect(selected).toHaveLength(280);
 });
 
 test("Fleet --versions filters before applying --limit", async () => {

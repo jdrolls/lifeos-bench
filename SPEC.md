@@ -25,7 +25,7 @@ One **cell** is one `(version, model, prompt, trial)`. The matrix is:
 | Trials | T1 1 · T2 1 · T3 2 · T4 2 · T5 2 |
 
 `models_allowlist` (per version) and `tier_models` (per tier) restrict lanes so the version
-bisect does not pay for the full model sweep. `expected_runs` is 560.
+bisect does not pay for the full model sweep. `expected_runs` is 704.
 
 GPT models run through the **same** Claude Code harness via a local ChatGPT-auth proxy, so
 hooks fire identically. That is what isolates *prompts* from *plumbing*: a GPT lane and a
@@ -141,7 +141,7 @@ and are counted as one.
 Run these; report the evidence, not the intention.
 
 1. `bun test` — all pass.
-2. `bun tools/Fleet.ts --dry-run | wc -l` — prints `560`.
+2. `bun tools/Fleet.ts --dry-run | wc -l` — prints `704`.
 3. `bun tools/StageVersion.ts <ID> --force` — produces a sandbox whose `~/.claude/CLAUDE.md`
    probe returns that version's own banner.
 4. Every fixture's baseline matches its golden-set expectations (failing tests fail, line

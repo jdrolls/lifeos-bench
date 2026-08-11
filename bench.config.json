@@ -57,7 +57,13 @@
       },
       "models_allowlist": [
         "sonnet-5",
-        "gpt-5.6-terra"
+        "gpt-5.6-terra",
+        "fable-5",
+        "haiku-4-5",
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "opus-5",
+        "opus-4-8"
       ],
       "note": "v6.0.5 still has three modes, but defines them ONLY in LIFEOS_SYSTEM_PROMPT.md \u2014 which is why loading it via --append-system-prompt-file is mandatory, not optional.",
       "format_marker": "\u2550\u2550\u2550\u2550 LifeOS \\| NATIVE MODE|\u2550\u2550\u2550 LifeOS \u2550\u2550\u2550|\u267b"
@@ -139,7 +145,7 @@
     ]
   },
   "tier_models_note": "T5 (personalization) runs on the two bisect models only. Grounding is a property of the scaffold, not of model tier, so paying for it across eight models buys little.",
-  "expected_runs": 560,
+  "expected_runs": 704,
   "runner": {
     "detached": true,
     "billing": "subscription-oauth (scrub ANTHROPIC_API_KEY + ANTHROPIC_AUTH_TOKEN; never --bare)",
