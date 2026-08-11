@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  buildReportOutputs,
+  CHART_CAPTIONS,
   divergingBarChart,
   groupedBarChart,
   niceMax,
   loadSections,
   parseSections,
+  renderInline,
   renderMarkdownSubset,
   roundedPercent,
   simpleBarChart,
@@ -109,6 +112,58 @@ describe("grouped bar readability", () => {
     const svg = groupedBarChart("t", ["a", "b"], [{ label: "x", values: [10, 20] }, { label: "y", values: [30, 40] }]);
     expect(svg).toContain('class="chart-value"');
   });
+});
+
+describe("generated Markdown report", () => {
+  function chartBlock(markdown: string, title: string): string {
+    const start = markdown.indexOf(`### ${title}`);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = markdown.indexOf("\n### ", start + 4);
+    return markdown.slice(start, end < 0 ? undefined : end);
+  }
+  function expectChartRow(markdown: string, title: string, row: unknown[]): void {
+    expect(chartBlock(markdown, title)).toContain(`| ${row.map((value) => value ?? "—").join(" | ")} |`);
+  }
+
+  test("generates a GitHub-viewable report from the same data and prose as HTML", async () => {
+    const { data, page, markdown } = await buildReportOutputs();
+    const sections = await loadSections();
+    const orderedTitles = sections.map((section) => `## ${section.title}`);
+    const positions = orderedTitles.map((title) => markdown.indexOf(title));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions.every((position, index) => index === 0 || position > positions[index - 1]!)).toBe(true);
+    for (const section of sections) expect(markdown).toContain(section.bodyMarkdown);
+    for (const caption of Object.values(CHART_CAPTIONS)) {
+      expect(markdown).toContain(caption);
+      expect(page.standalone).toContain(renderInline(caption));
+    }
+
+    expect(markdown).toContain(`| ${data.run.cells_total} | ${data.run.statuses.success ?? 0} | ${data.run.cost_usd_total} | ${data.run.wall_clock_total_h} |`);
+    expect(markdown).toContain("### The complete prompt set");
+    for (const prompt of data.generated.prompts) expect(markdown).toContain(`| ${prompt.tier} | ${prompt.id} |`);
+    expect(markdown).toContain("### Every lane");
+    expect(markdown).toContain("### Every lane by tier");
+
+    const models = data.generated.models.filter((model) => data.lanes.some((lane) => lane.model === model));
+    const lane = (version: string, model: string) => data.lanes.find((entry) => entry.version === version && entry.model === model);
+    const groupedRows = (pick: (entry: typeof data.lanes[number]) => number | null) => data.generated.versions.map((version) =>
+      [version, ...models.map((model) => { const entry = lane(version, model); return entry ? pick(entry) : null; })]);
+    const group = (version: string, name: string) => data.tier_groups.find((entry) => entry.version === version && entry.scope === "bisect models" && entry.group === name);
+    for (const version of data.generated.versions) {
+      expectChartRow(markdown, "Task pass@k on T1–T4 and on T5, by version", [version, group(version, "T1-T4")?.at_k ?? null, group(version, "T5")?.at_k ?? null]);
+      expectChartRow(markdown, "Mean output tokens generated per cell, by version", [version, data.versions.find((entry) => entry.version === version)?.output_tokens_mean ?? null]);
+      expectChartRow(markdown, "Enforcement-layer state files written per cell, by version", [version, data.versions.find((entry) => entry.version === version)?.hook_files_mean ?? null]);
+    }
+    for (const row of groupedRows((entry) => entry.format_pct)) expectChartRow(markdown, "Output-format compliance, by version and model", row);
+    for (const row of groupedRows((entry) => entry.algorithm_entry_pct)) expectChartRow(markdown, "Did the version enter the Algorithm before heavy work?", row);
+    for (const row of groupedRows((entry) => entry.algorithm_skip_pct)) expectChartRow(markdown, "Did it correctly STAY OUT of the Algorithm on trivial work?", row);
+    for (const row of data.raw_vs_l7) expectChartRow(markdown, "L7 minus the bare control, task pass@k", [row.model, row.delta_at_k]);
+    for (const [score, count] of Object.entries(data.judge.score_histogram)) expectChartRow(markdown, "Judge score distribution", [score, count]);
+
+    expect(await readFile("docs/report.md", "utf8")).toBe(markdown);
+    expect(markdown).not.toContain("<svg");
+    expect((markdown.match(/^\*\*Chart data\*\*$/gm) ?? []).length).toBe(Object.keys(CHART_CAPTIONS).length);
+  }, 30_000);
 });
 
 describe("axis rounding", () => {

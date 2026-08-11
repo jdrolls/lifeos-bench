@@ -9,8 +9,9 @@ models, on a frozen 21-prompt golden set. And a **harness you can point at your 
 sandboxed, resumable, cross-vendor-judged, with a containment gate that invalidates a run rather
 than quietly reporting it.
 
-The written-up findings are in **[`docs/report.html`](docs/report.html)**, generated from
-[`docs/report-data.json`](docs/report-data.json). The rest of this file is how to run it yourself.
+Read the GitHub-native report: **[`docs/report.md`](docs/report.md)**. The styled browser version
+is **[`docs/report.html`](docs/report.html)**. Both are generated from the same report data and
+[`docs/report-sections.md`](docs/report-sections.md); the rest of this file is how to run it yourself.
 
 ---
 
@@ -30,7 +31,7 @@ The written-up findings are in **[`docs/report.html`](docs/report.html)**, gener
 - **Cost is where versions separate.** L5 spends 10.9k output tokens per cell against L6's 3.0k and
   L7's 2.9k, for no measurable general-task gain.
 
-Full tables, charts and caveats: [`docs/report.html`](docs/report.html).
+Full tables, charts and caveats: [GitHub Markdown report](docs/report.md) · [styled HTML report](docs/report.html).
 
 ---
 
@@ -88,7 +89,7 @@ JUDGE_CMD='bash tools/claude-judge.sh {promptfile}' \
   bun tools/Judge.ts --model gpt-5.6-terra,gpt-5.6-luna,gpt-5.6-sol
 
 bun tools/Report.ts                     # results/phase1/REPORT.md
-bun tools/BuildReportPage.ts            # docs/report-data.json + docs/report.html
+bun tools/BuildReportPage.ts            # docs/report-data.json + docs/report.md + docs/report.html
 bun tools/LeakCheck.ts --root results   # MUST exit 0 — a dirty run does not get a report
 ```
 

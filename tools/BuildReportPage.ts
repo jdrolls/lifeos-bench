@@ -16,7 +16,7 @@ import { ensure, exists, path } from "./Common.ts";
 const SECTION_IDS = ["question", "design", "degraded", "algorithm", "versions", "models", "unmeasured", "conclusions", "caveats", "appendix"] as const;
 type SectionId = typeof SECTION_IDS[number];
 
-export type ReportSection = { id: string; title: string; bodyHtml: string };
+export type ReportSection = { id: string; title: string; bodyMarkdown: string; bodyHtml: string };
 type Numeric = number | null;
 type DisplayMetrics = {
   algorithm_entry_pct: Numeric; algorithm_entry_pass: number; algorithm_entry_total: number;
@@ -273,10 +273,10 @@ export function renderMarkdownSubset(markdown: string): string {
 export function parseSections(markdown: string): ReportSection[] {
   const marker = /^<!--section:\s*id=([^\s]+)\s+title=(.*?)-->\s*$/gm;
   const matches = [...markdown.matchAll(marker)];
-  return matches.map((match, index) => ({
-    id: match[1]!, title: match[2]!.trim(),
-    bodyHtml: renderMarkdownSubset(markdown.slice(match.index! + match[0].length, matches[index + 1]?.index ?? markdown.length).trim()),
-  }));
+  return matches.map((match, index) => {
+    const bodyMarkdown = markdown.slice(match.index! + match[0].length, matches[index + 1]?.index ?? markdown.length).trim();
+    return { id: match[1]!, title: match[2]!.trim(), bodyMarkdown, bodyHtml: renderMarkdownSubset(bodyMarkdown) };
+  });
 }
 
 export function placeholderSectionsMarkdown(): string {
@@ -393,9 +393,33 @@ function narrative(sections: ReportSection[], id: SectionId): string {
 function figure(svg: string, caption: string): string {
   return `<figure>${svg}<figcaption>${renderInline(caption)}</figcaption></figure>`;
 }
+
+export const CHART_CAPTIONS = {
+  general: "Left group: the four general tiers. Right group: personalization. The control (RAW) leads on general work and collapses on personalization; every LifeOS version does the reverse.",
+  algorithmEntry: "Three heavy prompts × two trials = six checks per lane. RAW has no Algorithm, so it has no bar. **L5 enters reliably. L6 is 0 of 6 across every model, with the nested-`claude` credential confound. Under L7, four Claude models are 0 of 6, Fable is 1 of 6, and every GPT model is 6 of 6.**",
+  algorithmSkip: "The same grader asking the opposite question on four trivial prompts. Near-perfect everywhere — which is exactly why averaging it with the chart above hides the result.",
+  tokens: "What each version costs in generated tokens for the same 21 prompts. L5 spends 4–5× what L6, L7 or the bare control spend.",
+  format: "Whether each response opened with the version's own documented format contract. The control has none to honour, so it has no bar.",
+  delta: "Positive means LifeOS 7 beat the bare control on that model. One prompt is worth 4.8–6.3 points here, so only sonnet-5 and gpt-5.6-sol sit outside the noise band.",
+  hooks: "Evidence that the hook layer actually ran, recorded per cell. The control registers no hooks and writes nothing; every LifeOS version writes 22–25 files per cell.",
+  judge: "Scores are bimodal, and the pass bar is 3 of 5 — so every score of 3 counts as a pass. The chart data carries the current distribution; the caveat above records the exact threshold sensitivity.",
+} as const;
+
+function markdownCell(value: unknown): string {
+  return display(value).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+function markdownTable(headers: string[], rows: Array<Array<unknown>>): string {
+  return `| ${headers.map(markdownCell).join(" | ")} |\n| ${headers.map(() => "---").join(" | ")} |\n${rows.map((row) => `| ${headers.map((_, index) => markdownCell(row[index])).join(" | ")} |`).join("\n")}`;
+}
+function markdownNarrative(sections: ReportSection[], id: SectionId): string {
+  const section = sections.find((candidate) => candidate.id === id);
+  return `## ${section?.title ?? id}\n\n${section?.bodyMarkdown ?? "TODO"}`;
+}
+function markdownChart(title: string, caption: string, headers: string[], rows: Array<Array<unknown>>): string {
+  return `### ${title}\n\n${caption}\n\n**Chart data**\n\n${markdownTable(headers, rows)}`;
+}
 function statusText(statuses: Record<string, number>): string { return Object.entries(statuses).map(([status, count]) => `${status}: ${count}`).join(", ") || "—"; }
-function glossary(data: ReportData): string {
-  const descriptions: Record<string, string> = {
+const GLOSSARY_DESCRIPTIONS: Record<string, string> = {
     algorithm_entry_pct: "Share of HEAVY prompts where the version read its Algorithm before starting work. Three prompts, two trials each.",
     algorithm_skip_pct: "Share of TRIVIAL prompts where it correctly did NOT read the Algorithm. Every version passes these, which is why they are a separate column.",
     mode_marker_pct: "Share of responses carrying the version's own documented mode banner. Null for versions that ship no modes.",
@@ -405,19 +429,25 @@ function glossary(data: ReportData): string {
     output_tokens_mean: "Mean generated output tokens per recorded cell.", wall_clock_mean_s: "Mean recorded wall-clock seconds per cell.",
     cost_usd_total: "Recorded total cost in US dollars.", hook_files_mean: "Mean hook-state files written where recorded.",
     cells: "Cells with a readable meta.json record.", statuses: "Histogram of meta.status values.",
-  };
-  const keys = Object.keys(data.lanes[0] ?? {}).filter((key) => key in descriptions);
-  return table(["Data key", "Meaning"], keys.map((key) => [key, descriptions[key]!]), true);
+};
+function glossary(data: ReportData): string {
+  const keys = Object.keys(data.lanes[0] ?? {}).filter((key) => key in GLOSSARY_DESCRIPTIONS);
+  return table(["Data key", "Meaning"], keys.map((key) => [key, GLOSSARY_DESCRIPTIONS[key]!]), true);
 }
-async function defectTable(): Promise<string> {
+type DefectData = { fields: string[]; rows: Array<Array<unknown>> };
+async function loadDefectData(): Promise<DefectData | null> {
   const file = path("docs", "defects.json");
-  if (!(await exists(file))) return "";
+  if (!(await exists(file))) return null;
   const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
   const items = Array.isArray(parsed) ? parsed : (parsed && typeof parsed === "object" && Array.isArray((parsed as { defects?: unknown }).defects) ? (parsed as { defects: unknown[] }).defects : []);
   const records = items.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item));
-  if (!records.length) return "";
+  if (!records.length) return null;
   const fields = [...new Set(records.flatMap((item) => Object.keys(item)))];
-  return `<h3>Recorded defects</h3>${table(fields, records.map((item) => fields.map((field) => typeof item[field] === "object" ? JSON.stringify(item[field]) : item[field])), true)}`;
+  return { fields, rows: records.map((item) => fields.map((field) => typeof item[field] === "object" ? JSON.stringify(item[field]) : item[field])) };
+}
+async function defectTable(): Promise<string> {
+  const defects = await loadDefectData();
+  return defects ? `<h3>Recorded defects</h3>${table(defects.fields, defects.rows, true)}` : "";
 }
 
 export async function renderReportPage(data: ReportData, sections: ReportSection[]): Promise<{ standalone: string; fragment: string }> {
@@ -439,32 +469,32 @@ export async function renderReportPage(data: ReportData, sections: ReportSection
     groupedBarChart("Task pass@k on T1–T4 and on T5, by version", ["T1–T4 (bisect models)", "T5 personalization"],
       data.generated.versions.map((version) => ({ label: version,
         values: [groupRow(version, "bisect models", "T1-T4")?.at_k ?? null, groupRow(version, "bisect models", "T5")?.at_k ?? null] }))),
-    "Left group: the four general tiers. Right group: personalization. The control (RAW) leads on general work and collapses on personalization; every LifeOS version does the reverse.");
+    CHART_CAPTIONS.general);
 
   const algorithmChart = figure(
     groupedBarChart("Did the version enter the Algorithm before heavy work?", modelLabels, byVersion((lane) => lane.algorithm_entry_pct)),
-    "Three heavy prompts × two trials = six checks per lane. RAW has no Algorithm, so it has no bar. **L5 enters reliably; L6 and L7 never do on a Claude model, and always do on a GPT model.**");
+    CHART_CAPTIONS.algorithmEntry);
   const algorithmSkipChart = figure(
     groupedBarChart("Did it correctly STAY OUT of the Algorithm on trivial work?", modelLabels, byVersion((lane) => lane.algorithm_skip_pct)),
-    "The same grader asking the opposite question on four trivial prompts. Near-perfect everywhere — which is exactly why averaging it with the chart above hides the result.");
+    CHART_CAPTIONS.algorithmSkip);
 
   const tokenChart = figure(
     simpleBarChart("Mean output tokens generated per cell, by version", data.versions.map((version) => ({ label: version.version, value: version.output_tokens_mean }))),
-    "What each version costs in generated tokens for the same 21 prompts. L5 spends 4–5× what L6, L7 or the bare control spend.");
+    CHART_CAPTIONS.tokens);
   const formatChart = figure(
     groupedBarChart("Output-format compliance, by version and model", modelLabels, byVersion((lane) => lane.format_pct)),
-    "Whether each response opened with the version's own documented format contract. The control has none to honour, so it has no bar.");
+    CHART_CAPTIONS.format);
 
   const deltaChart = figure(
     divergingBarChart("L7 minus the bare control, task pass@k", data.raw_vs_l7.map((row) => ({ label: row.model, value: row.delta_at_k }))),
-    "Positive means LifeOS 7 beat the bare control on that model. One prompt is worth 4.8–6.3 points here, so only sonnet-5 and gpt-5.6-sol sit outside the noise band.");
+    CHART_CAPTIONS.delta);
 
   const hookChart = figure(
     simpleBarChart("Enforcement-layer state files written per cell, by version", data.versions.map((version) => ({ label: version.version, value: version.hook_files_mean }))),
-    "Evidence that the hook layer actually ran, recorded per cell. The control registers no hooks and writes nothing; every LifeOS version writes 22–25 files per cell.");
+    CHART_CAPTIONS.hooks);
   const judgeChart = figure(
-    simpleBarChart("Judge scores, all 220 rubric verdicts", Object.entries(data.judge.score_histogram).map(([score, count]) => ({ label: score, value: count }))),
-    "Scores are bimodal, and the pass bar is 3 of 5 — so all 35 threes count as passes. Raising the bar to 4 would reclassify 16% of verdicts.");
+    simpleBarChart("Judge score distribution", Object.entries(data.judge.score_histogram).map(([score, count]) => ({ label: score, value: count }))),
+    CHART_CAPTIONS.judge);
 
   const laneHeaders = ["Version", "Model", "Prompts", "Algorithm entered %", "Algorithm skipped %", "Mode markers %", "Format %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD", "Hook files mean", "Statuses"];
   const laneTable = table(laneHeaders, data.lanes.map((lane) => [lane.version, lane.model, lane.task_prompts, lane.algorithm_entry_pct, lane.algorithm_skip_pct, lane.mode_marker_pct, lane.format_pct, lane.task_at_k_pct, lane.task_all_k_pct, lane.cells, lane.output_tokens_mean, lane.wall_clock_mean_s, lane.cost_usd_total, lane.hook_files_mean, statusText(lane.statuses)]));
@@ -547,20 +577,95 @@ footer { color:var(--muted); padding:1rem 0 3rem; font-size:.82rem; }
   return { standalone, fragment };
 }
 
-async function main(): Promise<void> {
+export async function renderReportMarkdown(data: ReportData, sections: ReportSection[]): Promise<string> {
+  const matrixRows = data.generated.versions.map((version) => [version, ...data.generated.models.map((model) =>
+    data.lanes.some((lane) => lane.version === version && lane.model === model) ? "run" : "—")]);
+  const trialRows = Object.entries(data.generated.trials).map(([tier, trial]) =>
+    [tier, trial, data.generated.tier_models[tier]?.join(", ") ?? "all lane models"]);
+  const modelLabels = data.generated.models.filter((model) => data.lanes.some((lane) => lane.model === model));
+  const laneFor = (version: string, model: string) => data.lanes.find((lane) => lane.version === version && lane.model === model);
+  // The chart tables below are the Markdown equivalent of the HTML SVGs and retain the
+  // same ReportData lookup as their visual counterparts.
+  const chartRows = (pick: (lane: LaneRecord) => Numeric) => data.generated.versions.map((version) =>
+    [version, ...modelLabels.map((model) => { const lane = laneFor(version, model); return lane ? pick(lane) : null; })]);
+  const groupRow = (version: string, scope: string, group: string) =>
+    data.tier_groups.find((entry) => entry.version === version && entry.scope === scope && entry.group === group);
+  const generalRows = data.generated.versions.map((version) => [version,
+    groupRow(version, "bisect models", "T1-T4")?.at_k ?? null,
+    groupRow(version, "bisect models", "T5")?.at_k ?? null]);
+  const tierGroupRows = data.tier_groups.map((entry) => [entry.version, entry.scope, entry.group, entry.prompts, entry.at_k, entry.all_k]);
+  const laneHeaders = ["Version", "Model", "Prompts", "Algorithm entered %", "Algorithm skipped %", "Mode markers %", "Format %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD", "Hook files mean", "Statuses"];
+  const laneRows = data.lanes.map((lane) => [lane.version, lane.model, lane.task_prompts, lane.algorithm_entry_pct, lane.algorithm_skip_pct, lane.mode_marker_pct, lane.format_pct, lane.task_at_k_pct, lane.task_all_k_pct, lane.cells, lane.output_tokens_mean, lane.wall_clock_mean_s, lane.cost_usd_total, lane.hook_files_mean, statusText(lane.statuses)]);
+  const tierHeaders = ["Version", "Model", "Tier", "Prompts", "Algorithm entered %", "Algorithm skipped %", "Mode markers %", "Format %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD"];
+  const tierRows = data.tiers.map((tier) => [tier.version, tier.model, tier.tier, tier.task_prompts, tier.algorithm_entry_pct, tier.algorithm_skip_pct, tier.mode_marker_pct, tier.format_pct, tier.task_at_k_pct, tier.task_all_k_pct, tier.cells, tier.output_tokens_mean, tier.wall_clock_mean_s, tier.cost_usd_total]);
+  const defects = await loadDefectData();
+
+  const parts = [
+    "# Does LifeOS actually help?",
+    `Three released versions of LifeOS measured against a bare control, across eight models, on a frozen set of 21 prompts · golden set ${data.generated.golden_set} · aggregate results only`,
+    markdownNarrative(sections, "question"),
+    markdownNarrative(sections, "design"),
+    "### The versions under test",
+    markdownTable(["Version", ...data.generated.models], matrixRows),
+    "### Trials per tier",
+    markdownTable(["Tier", "Trials", "Models"], trialRows),
+    "### The complete prompt set",
+    markdownTable(["Tier", "Prompt id", "What the model was asked", "Checks"], data.generated.prompts.map((prompt) => [prompt.tier, prompt.id, prompt.prompt, prompt.checks.join(", ")])),
+    "### What was run",
+    markdownTable(["Recorded cells", "Successful cells", "Recorded cost USD", "Recorded wall-clock hours"], [[data.run.cells_total, data.run.statuses.success ?? 0, data.run.cost_usd_total, data.run.wall_clock_total_h]]),
+    markdownTable(["Version", "Cells", "Statuses"], data.versions.map((version) => [version.version, version.cells, statusText(version.statuses)])),
+    markdownChart("Enforcement-layer state files written per cell, by version", CHART_CAPTIONS.hooks, ["Version", "Hook files mean"], data.versions.map((version) => [version.version, version.hook_files_mean])),
+    markdownNarrative(sections, "degraded"),
+    markdownChart("Task pass@k on T1–T4 and on T5, by version", CHART_CAPTIONS.general, ["Version", "T1–T4 (bisect models) pass@k %", "T5 personalization pass@k %"], generalRows),
+    "### Pass-rates by tier group",
+    markdownTable(["Version", "Scope", "Tiers", "Prompts", "pass@k %", "pass^k %"], tierGroupRows),
+    markdownChart("Output-format compliance, by version and model", CHART_CAPTIONS.format, ["Version", ...modelLabels], chartRows((lane) => lane.format_pct)),
+    markdownNarrative(sections, "algorithm"),
+    markdownChart("Did the version enter the Algorithm before heavy work?", CHART_CAPTIONS.algorithmEntry, ["Version", ...modelLabels], chartRows((lane) => lane.algorithm_entry_pct)),
+    markdownChart("Did it correctly STAY OUT of the Algorithm on trivial work?", CHART_CAPTIONS.algorithmSkip, ["Version", ...modelLabels], chartRows((lane) => lane.algorithm_skip_pct)),
+    markdownNarrative(sections, "versions"),
+    markdownChart("Mean output tokens generated per cell, by version", CHART_CAPTIONS.tokens, ["Version", "Tokens mean"], data.versions.map((version) => [version.version, version.output_tokens_mean])),
+    markdownNarrative(sections, "models"),
+    markdownChart("L7 minus the bare control, task pass@k", CHART_CAPTIONS.delta, ["Model", "L7 minus RAW pass@k (pp)"], data.raw_vs_l7.map((row) => [row.model, row.delta_at_k])),
+    markdownNarrative(sections, "unmeasured"),
+    markdownNarrative(sections, "conclusions"),
+    markdownNarrative(sections, "caveats"),
+    markdownChart("Judge score distribution", CHART_CAPTIONS.judge, ["Score", "Verdicts"], Object.entries(data.judge.score_histogram).map(([score, count]) => [score, count])),
+    ...(defects ? ["### Recorded defects", markdownTable(defects.fields, defects.rows)] : []),
+    markdownNarrative(sections, "appendix"),
+    "### Metric glossary",
+    markdownTable(["Data key", "Meaning"], Object.keys(data.lanes[0] ?? {}).filter((key) => key in GLOSSARY_DESCRIPTIONS).map((key) => [key, GLOSSARY_DESCRIPTIONS[key]!])),
+    "### Every lane",
+    markdownTable(laneHeaders, laneRows),
+    "### Every lane by tier",
+    markdownTable(tierHeaders, tierRows),
+    "Every figure is regenerated from the recorded per-cell artifacts by one shared aggregation module. No individual transcripts or workspaces are included.",
+  ];
+  return `${parts.join("\n\n")}\n`;
+}
+
+export async function buildReportOutputs(): Promise<{ data: ReportData; page: { standalone: string; fragment: string }; markdown: string }> {
   const data = await buildReportData();
   const docs = path("docs");
   await ensure(docs);
   const sections = await loadSections(join(docs, "report-sections.md"));
   const page = await renderReportPage(data, sections);
-  await writeFile(join(docs, "report-data.json"), JSON.stringify(data, null, 2) + "\n", "utf8");
-  await writeFile(join(docs, "report.html"), page.standalone, "utf8");
-  await writeFile(join(docs, "report-artifact.html"), page.fragment, "utf8");
+  const markdown = await renderReportMarkdown(data, sections);
+  return { data, page, markdown };
+}
+
+async function main(): Promise<void> {
+  const output = await buildReportOutputs();
+  await writeFile(path("docs", "report-data.json"), JSON.stringify(output.data, null, 2) + "\n", "utf8");
+  await writeFile(path("docs", "report.html"), output.page.standalone, "utf8");
+  await writeFile(path("docs", "report-artifact.html"), output.page.fragment, "utf8");
+  await writeFile(path("docs", "report.md"), output.markdown, "utf8");
   console.log(JSON.stringify({
     data: "docs/report-data.json",
     page: "docs/report.html",
+    markdown: "docs/report.md",
     artifact: "docs/report-artifact.html",
-    bytes: Buffer.byteLength(page.standalone),
+    bytes: { html: Buffer.byteLength(output.page.standalone), markdown: Buffer.byteLength(output.markdown) },
   }));
 }
 
