@@ -16,17 +16,18 @@ The written-up findings are in **[`docs/report.html`](docs/report.html)**, gener
 
 ## Findings in four lines
 
-- **On general work (T1–T4), LifeOS is roughly neutral.** Bare control 96.9% pass@k; L5 96.9%,
-  L6 93.8%, L7 90.6%. Each step is one or two prompts — inside the noise a two-trial design can
-  resolve, but consistent in direction.
+- **On general work (T1–T4), LifeOS is roughly neutral.** Across all eight models, RAW is 96.1%
+  pass@k, L6 91.4%, and L7 93.0%; L5's two-model result is 96.9%. The added L6 sweep reverses the
+  earlier L6/L7 ordering, so it weakens rather than confirms a monotone version ladder.
 - **On personalization (T5) it is decisive.** Control 40.0%; every LifeOS version 90–100%. The
   control structurally cannot know the user.
 - **The Algorithm has stopped firing on Claude models.** On heavy work: L5 enters it 5–6 of 6;
-  L6 0 of 6 (confounded — see below); L7 **0 of 6 on every Claude model and 6 of 6 on every GPT-5.6
+  L6 **0 of 6 on all eight models** (confounded: its nested `claude` has no sandbox credentials — see
+  below); L7 gets **0 of 6 on four Claude models, 1 of 6 on Fable 5, and 6 of 6 on every GPT-5.6
   model**, from the same prose instruction. That is instruction compliance, not capability — and
   the difference from L5 is *register*, not presence: L5 says "MANDATORY FIRST ACTION", L7 says
   "First action for such work".
-- **Cost is where versions separate.** L5 spends 10.9k output tokens per cell against L6's 2.0k and
+- **Cost is where versions separate.** L5 spends 10.9k output tokens per cell against L6's 3.0k and
   L7's 2.9k, for no measurable general-task gain.
 
 Full tables, charts and caveats: [`docs/report.html`](docs/report.html).
@@ -41,8 +42,8 @@ Full tables, charts and caveats: [`docs/report.html`](docs/report.html).
 - **bun/bunx only — never npm/npx.**
 - An OAuth token for the CLI at `sandboxes/_auth/oauth-token`, held *outside* every sandbox.
 - For GPT lanes: CLIProxyAPI signed in and listening on `:8317`.
-- ~20GB free disk and several hours. The published run was 560 cells, 17.1 h of cell wall-clock and
-  **$359.37**.
+- ~20GB free disk and several hours. The published run is 704 cells, 20.38 h of cell wall-clock and
+  **$474.63**.
 
 ### Vendor the frameworks under test
 
@@ -155,7 +156,7 @@ Two placement rules are load-bearing, and both were learned expensively:
 
 Because that first failure was invisible in the artifacts, **every cell now records what its hooks
 wrote** — `home-writes.txt`, `home-state/`, and a count in `meta.json`. "Did the enforcement layer
-actually run" is a number in your dataset, not a hope. In the published run: L5 24.0, L6 21.8,
+actually run" is a number in your dataset, not a hope. In the published run: L5 24.0, L6 22.1,
 L7 25.4 files per cell; the control, which registers no hooks, zero.
 
 **Nothing credential-bearing goes in a sandbox.** The direct consequence is that a hook which
@@ -213,9 +214,9 @@ _archive/         retired and pre-fix artifacts, quarantined out of the containm
 
 ## Run status
 
-560 cells, 559 `success`, containment clean (18827 files scanned, 0 violations — and 0 for each
-live lane alone: RAW 5051, L5 3338, L6 2137, L7 8293), 220 rubric verdicts with zero judge errors
-and zero rows unjudged. Recorded cost **$359.37** across 17.1 hours of cell wall-clock.
+704 cells, 703 `success`, 1 `timeout`, containment clean (23577 files scanned, 0 violations — and
+0 for each live lane alone: RAW 5051, L5 3338, L6 6889, L7 8293), 262 rubric verdicts with zero
+judge errors and zero rows unjudged. Recorded cost **$474.63** across 20.38 hours of cell wall-clock.
 
 The single failure is `RAW/opus-5/t4-casual-complex/trial-2`, a reproducible 1200s timeout — it
 failed twice, the second time on an idle machine — recorded as a timeout rather than rescued by
@@ -243,9 +244,9 @@ Read these before quoting any number.
   behaviour faithfully reproduced — but it consumes context and shows up in graded output.
 - **Trial counts are low.** One prompt is worth 4.8 points on a 21-prompt lane, 6.3 on a 16-prompt
   one. Format compliance has been observed varying run to run on an identical lane.
-- **The judge bar is permissive.** `min_score` is 3 of 5; scores are bimodal (120 fives, 34 ones of
-  220) and all 35 threes pass — including one whose own reasoning says the answer failed the thing
-  the rubric asked about. Raising the bar to 4 reclassifies 16% of verdicts.
+- **The judge bar is permissive.** `min_score` is 3 of 5; scores are bimodal (143 fives, 36 ones of
+  262) and all 41 threes pass — including one whose own reasoning says the answer failed the thing
+  the rubric asked about. Raising the bar to 4 reclassifies 15.6% of verdicts.
 - **Wall-clock is not comparable** at `concurrency > 1`; cells contend for CPU. Tokens, cost,
   Algorithm entry, format and pass-rates are unaffected.
 - **The control is bare of LifeOS, not of all scaffolding** — it still has Claude Code's bundled

@@ -161,7 +161,10 @@ RAW-vs-L7 delta, needs the re-run.** The harness fix is in (`Sandbox.runWorkspac
 is the existing wave commands with no new flags. This supersedes items 4–7 of Phase 5 in priority —
 confirming a number five times is worthless if the lane that produced it was mis-configured.
 
-## Final results (scaffolded lanes re-run 2026-08-10, judged 2026-08-10)
+## Phase 4 base results (scaffolded lanes re-run 2026-08-10, judged 2026-08-10)
+
+> This is the 560-cell base matrix. The subsequent L6 six-model sweep is a Phase 5 outcome,
+> recorded below; it raises the cumulative artifact set to 704 cells.
 
 **560/560 cells, 559 `success`, containment clean (18827 files, 0 violations — and 0 for each live
 lane scanned alone: RAW 5051, L5 3338, L6 2137, L7 8293), 220 rubric verdicts, zero judge errors,
@@ -187,10 +190,10 @@ regression tests and listed in `README.md` → Grader integrity:
 
 - **Algorithm entry was averaged with Algorithm skip.** `code:algorithm_read` asks opposite
   questions on opposite prompts — enter the Algorithm for heavy work, stay out of it for trivial
-  work. Every version passes the skip checks, so the combined column dragged a 0-of-6 entry rate up
-  to a passing-looking 40% and hid the largest effect in the dataset. Now split on the golden set's
-  own `expect` field: **L5 enters on 5–6 of 6 heavy prompts; L6 0 of 6 (hook confounded); L7 0 of 6
-  on every Claude model and 6 of 6 on every GPT model.**
+  work. Every version passes the skip checks, so the combined column dragged a near-zero entry rate
+  up to a passing-looking 40–50% and hid the largest effect in the dataset. Now split on the golden
+  set's own `expect` field: **L5 enters on 5–6 of 6 heavy prompts; L6 0 of 6 (hook confounded); L7
+  gets 0 of 6 on four Claude models, 1 of 6 on Fable 5, and 6 of 6 on every GPT model.**
 
 - **A `skipped` grader counted as a task failure.** The golden set skips checks that cannot apply
   to a version — RAW's T5 grounding — so a documented exemption became a penalty, and only the
@@ -211,8 +214,10 @@ regression tests and listed in `README.md` → Grader integrity:
 | L6 | 93.8% | 93.8% | 2.0k |
 | L7 | 90.6% | 87.5% | 2.9k |
 
-The six-model sweep agrees: RAW 95.8% vs L7 93.8% on T1–T4. Monotone by version, and inside the
-noise band a 1–2 trial design can resolve (one prompt = 4.8–6.3 points).
+The Phase 5 L6 six-model sweep changes that reading: across all eight models, RAW/L6/L7 are
+96.1%/91.4%/93.0% pass@k on T1–T4; in the six added models alone they are 95.8%/90.6%/93.8%.
+It reverses the L6/L7 order from the two-model bisect rather than confirming a monotone ladder.
+Within a lane, the 1–2 trial design remains noisy (one prompt = 4.8–6.3 points).
 
 **On T5 it is decisive.** RAW 40.0% pass@k / 10.0% pass^k; L5 100/60, L6 90/70, L7 90/60. Large,
 consistent across versions and models, and close to tautological — the control structurally
@@ -222,9 +227,9 @@ cannot know the persona. What it establishes is that the delivery mechanism work
 luna 0.0, opus-5 −6.2, sol −12.5. Does not sort by model tier; only the outer two are outside the
 noise band.
 
-**Cost separates the versions cleanly.** L5 ~10.9k output tokens/cell vs L6 2.0k and L7 2.9k, for
-a task pass-rate inside the noise band. Format compliance moves the other way: L5 70% → L6 100% →
-L7 96.4% (the last dragged down entirely by Haiku 4.5 at 66.7%).
+**Cost separates the versions cleanly.** L5 is ~10.9k output tokens/cell; after the L6 sweep,
+L6 is 3.0k and L7 2.9k, for a task pass-rate inside the noise band. Format compliance moves the
+other way: L5 70% → L6 100% → L7 96.4% (the last dragged down entirely by Haiku 4.5 at 66.7%).
 
 **Both retracted Phase 1–3 headlines still fail, and one Phase 4 headline joins them.** "Frontier
 models pass 100% bare" is *partly rehabilitated* — four of eight models do reach 100% pass@k bare
@@ -311,11 +316,27 @@ either as a scaffold regression. L5 is unaffected because v5 routes via prose in
 subprocess, nothing to spawn. That asymmetry is itself the interesting result: prose routing
 survives an environment where hook-based routing cannot run.
 
-What the L7 routing column *does* show, read correctly: 40% on every Claude model, 100% on all
-three GPT models. That is unrouted instruction-following — GPT models read the Algorithm because
-the system prompt says to; Claude models mostly do not.
+What the L7 routing column *does* show, read correctly: 40% on four Claude models, 50% on Fable 5,
+and 100% on all three GPT models. That is unrouted instruction-following — GPT models read the
+Algorithm because the system prompt says to; Claude models mostly do not.
 
 ## Phase 5 — hardening
+
+### L6 six-model sweep — done 2026-08-10
+
+The sweep adds the six non-bisect models to L6 (144 cells), completing L6 across all eight models.
+The cumulative artifacts now record **704 cells: 703 `success`, 1 `timeout`, 262 rubric verdicts,
+$474.63 recorded cost, and 20.38 h wall-clock**. On T1–T4, all-eight RAW/L6/L7 pass@k is
+**96.1% / 91.4% / 93.0%**; the six added models alone are **95.8% / 90.6% / 93.8%**. The extra
+samples therefore **moved** the apparent bisect ladder: L6 falls below L7 instead of preserving the
+prior 93.8% vs 90.6% ordering.
+
+L6 Algorithm entry remains **0 of 6 on all eight models**. This is not a regression result: L6
+routes through a nested `claude`, and the sandbox deliberately provides no credentials, so that
+nested call cannot authenticate. It measures unrouted model behaviour under this harness.
+
+**This does not change the gating item:** five-trial confirmation of the RAW-vs-L7 outliers remains
+first — sonnet-5 (+14.3) and gpt-5.6-sol (−12.5).
 
 **Items 1–4 are done.** Their outcomes are recorded inline rather than deleted, because two of
 them (the credential decision, the hook re-run) are permanent constraints on how any future result
@@ -409,28 +430,23 @@ here must be read. Items 5–8 remain and were re-ordered against the judged dat
 
 ### What remains, re-ordered by what the judged data justifies
 
-5. **5-trial confirmation — now the gating item, and its target has changed.** Every T1–T4
-   difference on this page is inside the band one prompt is worth (4.8 points on a 21-prompt lane,
-   6.3 on a 16-prompt lane), so "the scaffolding does not help on general tasks" currently rests
-   on a *direction* that is consistent across two independent lane sets rather than on a
-   separation. Priority order, replacing the old one:
-   1. **RAW vs L7 on the two outlier models** — sonnet-5 (+14.3) and gpt-5.6-sol (−12.5) are the
-      only per-model deltas outside the noise band, and both headline claims lean on them.
-   2. **The T1–T4 version ladder on the bisect models** (96.9 / 96.9 / 93.8 / 90.6) — monotone, but
-      each step is one prompt.
-   3. **Format compliance**, still observed varying run to run on an identical lane.
+5. **5-trial confirmation — still the gating item.** The completed L6 sweep moved, rather than
+   confirmed, the two-model version ladder: all-eight T1–T4 pass@k is RAW/L6/L7
+   96.1/91.4/93.0, while the six added models are 95.8/90.6/93.8. It does **not** change the
+   required gate: run five trials of **RAW vs L7 on the two outlier models**, sonnet-5 (+14.3) and
+   gpt-5.6-sol (−12.5), before promoting either difference.
 
-   ~~`routed_heavy` / `algorithm_entered`~~ are **obsolete** as confirmation targets: one version
-   has no mode/Algorithm classifier by design and the other's cannot authenticate in-sandbox, so
-   more trials would
-   only re-measure unrouted model behaviour with tighter error bars.
+   **Remaining-work order:** (1) that five-trial outlier confirmation; (2) raise the judge's
+   discriminative power; (3) check cross-vendor judge agreement; (4) conditionally bisect format
+   compliance. ~~`routed_heavy` / `algorithm_entered`~~ remain obsolete confirmation targets:
+   L7 has no classifier by design and L6's nested `claude` cannot authenticate without sandbox
+   credentials, so further trials would only tighten an unrouted-behaviour measurement.
 
 6. **Raise the judge's discriminative power — cheapest remaining win, and it needs no new judge
-   calls.** Scores are recorded, so the threshold is a re-analysis, not a re-run. Measured
-   sensitivity on the 220 verdicts: at `min_score` 3 → 184 pass; at 4 → 149 (35 verdicts flip,
-   RAW 15 / L7 13 / L5 5 / L6 2); at 5 → 120. The flips are roughly proportional to each version's
-   row count, so the threshold probably does not reverse any finding — but it moves absolute
-   pass-rates by more than most version differences here, which is the actual complaint.
+   calls.** Scores are recorded, so the threshold is a re-analysis, not a re-run. On the current
+   262 verdicts: `min_score` 3 → 224 pass; 4 → 183 (41 verdicts flip); 5 → 143. The threshold
+   moves absolute pass-rates by more than most version differences here, which is the actual
+   complaint.
 
    Sharpening the rubrics is the better fix and this run produced the evidence for it: a
    `t5-conflict` verdict scored 3 and **passed** while its own reasoning states the response "does
@@ -440,8 +456,8 @@ here must be read. Items 5–8 remain and were re-ordered against the judged dat
    than a dimension, or `min_score` for that expectation must be 4.
 7. **Judge agreement check:** re-judge a sample with the alternate vendor and record disagreement
    rather than averaging it. Unchanged in priority — but note the score distribution is bimodal
-   (120 fives, 34 ones, only 66 in between of 220), so a disagreement study should sample the
-   middle deliberately rather than uniformly.
+   (143 fives, 36 ones, 83 in between of 262), so a disagreement study should sample the middle
+   deliberately rather than uniformly.
 8. **Conditional bisect narrowing — now answerable, and mostly negative.** Q1 shows **no cliff in
    task pass-rate** between adjacent versions (T1–T4: 96.9 → 93.8 → 90.6; T5: 100 → 90 → 90), so
    the conditional does not fire for that metric and intermediate tags would buy nothing. It

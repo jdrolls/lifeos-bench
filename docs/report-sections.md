@@ -72,30 +72,31 @@ after the runs began.
   running"* is a number in the dataset rather than a claim in a README.
 
 <!--section: id=degraded title=Has LifeOS degraded?-->
-**On general work: slightly, and consistently in one direction. On personalization: no — every
-version is transformative. On Algorithm engagement: yes, and severely.**
+**On general work: no measurable benefit. On personalization: every version is transformative. On
+Algorithm engagement: yes, but L6's result is confounded.**
 
-Across the four non-personalization tiers, on the two models every version ran, the ladder steps
-down from the bare control:
+The widened L6 lane now supports an all-eight comparison for RAW, L6, and L7. L5 remains limited
+to the two bisect models:
 
-| Version | T1–T4 pass@k | T1–T4 pass^k |
-|---|---:|---:|
-| **RAW** (control) | **96.9%** | 93.8% |
-| L5 · PAI v5.0.0 | 96.9% | 90.6% |
-| L6 · LifeOS v6.0.5 | 93.8% | 93.8% |
-| L7 · LifeOS v7.28.3 | 90.6% | 87.5% |
+| Version | Model base | T1–T4 pass@k | T1–T4 pass^k |
+|---|---|---:|---:|
+| **RAW** (control) | all eight | **96.1%** | 92.2% |
+| L5 · PAI v5.0.0 | bisect models only | 96.9% | 90.6% |
+| L6 · LifeOS v6.0.5 | all eight | 91.4% | 88.3% |
+| L7 · LifeOS v7.28.3 | all eight | 93.0% | 88.3% |
 
-The six-model sweep says the same with three times the samples: control 95.8%, L7 93.8%. Each
-individual step is one or two prompts and sits inside what a two-trial design can resolve — so the
-honest reading is *no measurable general-task benefit, and a consistent hint of a small cost*, not
-*LifeOS makes models worse*.
+The added six-model L6 sweep **moved rather than confirmed** the earlier bisect ladder. On those two
+models, RAW/L5/L6/L7 pass@k was 96.9%/96.9%/93.8%/90.6%. In the six added models alone, RAW/L6/L7
+are 95.8%/90.6%/93.8%. The L6/L7 order therefore reverses outside the bisect pair, so a monotone
+version-degradation claim is not supported. The honest reading is *no measurable general-task
+benefit*, not *LifeOS makes models worse*.
 
 On personalization the direction reverses and the size is not subtle: the control passes **40.0%**
 and every LifeOS version passes 90–100%. That is what the framework is for, and it works.
 
-Format compliance is the one axis that improves monotonically across releases — 70% under L5, 100%
-under L6, 96.4% under L7, the last dragged down entirely by Haiku 4.5 at 66.7%. Newer LifeOS is
-better at doing what it says it will do with its output.
+Format compliance is the clearest structural improvement over L5 — 70% under L5, 100% under L6,
+and 96.4% under L7, the last dragged down entirely by Haiku 4.5 at 66.7%. The two newer versions
+are markedly better at doing what they say they will do with their output.
 
 The real regression is not on this page's tables. It is whether the Algorithm runs at all.
 
@@ -109,7 +110,7 @@ work:
 | Version | Claude models | GPT-5.6 models |
 |---|---|---|
 | **L5** — prose routing in `CLAUDE.md` | sonnet-5 **5 of 6** | terra **6 of 6** |
-| **L6** — classifier hook | sonnet-5 **0 of 6** | terra **0 of 6** |
+| **L6** — classifier hook | all five Claude models **0 of 6** | all three GPT-5.6 models **0 of 6** — confounded: its nested `claude` has no sandbox credentials |
 | **L7** — prose in the system prompt, no classifier | sonnet-5, haiku-4.5, opus-5, opus-4.8 all **0 of 6**; fable-5 1 of 6 | terra, luna, sol all **6 of 6** |
 
 Three different things are happening here and they need separating:
@@ -125,8 +126,8 @@ Three different things are happening here and they need separating:
    Algorithm classifier** — nothing in it decides that a turn is an Algorithm run. Six hooks do
    still fire on every prompt, but unlike v6's router they are deterministic and make no model
    call, so the credential boundary never touches them. The instruction lives in the system prompt
-   as prose, identical for every model. Every GPT-5.6 lane follows it 6 of 6. Every Claude lane
-   ignores it 0 of 6.
+   as prose, identical for every model. Every GPT-5.6 lane follows it 6 of 6. Four Claude lanes
+   ignore it 0 of 6; Fable 5 follows it once in six tries.
 
    The recorded artifacts confirm v7's hooks ran rather than failing quietly: in one L7 build cell
    they tracked seven tool calls and wrote `runWasOpen: false`. The enforcement layer was live and
@@ -144,17 +145,18 @@ they say it, and where:
 | **L7** | the system prompt, under `## The Algorithm` | "**First action for such work:** read the Algorithm…" |
 
 Same instruction, same imperative mood, no classifier behind either one. v5's emphatic form gets a
-Claude model to 5 of 6. v7's calm form gets every Claude model to 0 of 6 — while every GPT model
-follows the calm form perfectly.
+Claude model to 5 of 6. Under v7's calm form, four Claude models fall to 0 of 6 and Fable 5 reaches
+1 of 6 — while every GPT model follows the calm form perfectly.
 
 That inversion is worth sitting with, because it cuts against standard prompt hygiene. The usual
 advice for modern models is to strip `MUST` and `CRITICAL`, on the grounds that emphatic language
 causes over-triggering. v7 reads as though it took that advice, and on one vendor the behaviour
 left with the emphasis.
 
-So: *does the Algorithm still fire?* **On GPT models, always. On Claude models, only under v5.**
-And *is that the framework or the model?* **Both, in different places** — v7 exposed a
-model-compliance gap that v5's louder prose had been covering.
+So: *does the Algorithm still fire?* **On GPT models, always. On Claude models, reliably only under
+v5; v7 produced one Fable exception in 30 Claude heavy-prompt opportunities.** And *is that the
+framework or the model?* **Both, in different places** — v7 exposed a model-compliance gap that
+v5's louder prose had been covering.
 
 The mirror-image check confirms nobody is merely over-triggering: on trivial prompts every version
 correctly stays out of the Algorithm, near-perfectly. The one exception is L5 on GPT, which enters
@@ -165,25 +167,26 @@ it on half the trivial prompts too. v5's instruction is louder in both direction
 
 | | L5 · PAI v5.0.0 | L6 · LifeOS v6.0.5 | L7 · LifeOS v7.28.3 |
 |---|---|---|---|
-| Enters the Algorithm on heavy work | **best** — 5–6 of 6 | 0 of 6 (hook confounded) | 0 of 6 on Claude · 6 of 6 on GPT |
+| Enters the Algorithm on heavy work | **best** — 5–6 of 6 | 0 of 6 on **all eight models** (nested-`claude` / no-sandbox-credentials confound) | Claude: four models 0 of 6, Fable 1 of 6 · GPT: 6 of 6 |
 | Stays out on trivial work | over-fires on GPT | perfect | perfect |
-| T1–T4 pass@k | **96.9%** | 93.8% | 90.6% |
+| T1–T4 pass@k (bisect models) | **96.9%** | 93.8% | 90.6% |
+| T1–T4 pass@k (all eight; L5 unavailable) | — | 91.4% | 93.0% |
 | T5 personalization pass@k | **100%** | 90% | 90% |
 | Format contract honoured | 70% | **100%** | 96.4% |
-| Output tokens per cell | 10.9k | **2.0k** | 2.9k |
+| Output tokens per cell | 10.9k | 3.0k | **2.9k** |
 
 L5 wins the two things LifeOS exists to do — enter the Algorithm, use the user's real context — and
 pays roughly **4–5× the generated tokens of every other configuration**, including the bare
 control, for a general task pass-rate no better than the control's. That is the trade in one line:
 **v5 buys Algorithm engagement with tokens.**
 
-L6 is the cheapest configuration measured at 2.0k tokens per cell — below even the bare control —
-with a perfect format contract and the best T1–T4 pass^k. Its weakness is structural: it moved
-routing into machinery that fails silently and left nothing behind it.
+The all-eight L6 sweep puts it at 3.0k output tokens per cell, against L7's 2.9k and RAW's 2.8k;
+its perfect format contract remains the strongest result. Its Algorithm-entry result is **0 of 6 on
+all eight models**, but that is not a regression finding: routing is delegated to a nested `claude`
+that cannot authenticate because the sandbox intentionally holds no credentials.
 
-L7 is the broadest. It is the only version tested across all eight models and it holds a
-near-perfect format contract on seven of them — and it is the only one where, for a Claude user,
-the Algorithm is effectively inert.
+L6 and L7 now both cover all eight models. L7 holds a near-perfect format contract on seven of them
+and, for a Claude user, its Algorithm remains effectively inert.
 
 <!--section: id=models title=What this says about models, frameworks, and where the value is-->
 **The bare control is much stronger than the framing of #1715 assumed.** Four of the eight models
@@ -197,8 +200,8 @@ lane. At one or two trials per prompt, only two of the eight sit outside the noi
 
 The single biggest model effect measured here is not capability at all — it is **instruction
 compliance**. Given the same system prompt telling them to read the Algorithm first, GPT-5.6 lanes
-comply 100% of the time and Claude lanes 0%. A framework built on written instruction inherits that
-difference wholesale.
+comply 100% of the time; Claude lanes comply once in 30 heavy-prompt opportunities (3.3%). A
+framework built on written instruction inherits that difference wholesale.
 
 Which points at the general lesson: **a framework's leverage is in what it supplies, not in what it
 instructs.** The one place LifeOS shows a large, unambiguous, reproducible effect is the tier where
@@ -241,17 +244,17 @@ supplies context. Everything thicker is where its case still has to be made.
 - **Do not revert either.** v5 costs 4–5× the tokens and has the weakest format contract. The move
   is not to go back but to **port v5's prose-level Algorithm instruction forward into v7** — it is
   the only mechanism in this study that got a Claude model into the Algorithm.
-- **Keep the format contract.** It is the one thing that improved monotonically, and it cost
-  nothing measurable.
+- **Keep the format contract.** It improved sharply after v5 and remained near-perfect, at no
+  measurable task-quality cost.
 - **v6's lesson is the durable one:** routing that lives only in machinery disappears the moment
   the machinery cannot run, and takes no fallback with it. Any enforcement worth having needs a
   prose floor underneath it.
 
 ### On models
 
-- **For LifeOS-style written instruction, GPT-5.6 lanes comply and Claude lanes do not** — 100% vs
-  0% on the identical system prompt. If you run LifeOS on a Claude model and expect the Algorithm
-  to fire, verify it; today it does not.
+- **For LifeOS-style written instruction, GPT-5.6 lanes comply and Claude lanes almost never do** —
+  100% vs 3.3% on the identical system prompt. If you run LifeOS on a Claude model and expect the
+  Algorithm to fire, verify it; today it is not reliable.
 - **On ordinary work, pick the model, not the scaffold.** Four of eight models are already at 100%
   bare on this prompt set.
 - **Small models pay their cost in form, not substance.** Haiku 4.5 holds its task pass-rate under
@@ -273,12 +276,14 @@ supplies context. Everything thicker is where its case still has to be made.
    work artifacts reused, delegation. The single-turn edge is now measured; the rest is not.
 
 <!--section: id=caveats title=How much weight these numbers carry-->
-- **Trial counts are low.** One or two trials per prompt: a single prompt is worth 4.8–6.3 points.
-  Treat any smaller difference as noise. The Algorithm-entry result is the exception — 0 of 6
-  against 6 of 6, repeated across four Claude models and three GPT models, is not noise.
-- **The judge bar is permissive.** A rubric passes at 3 of 5. Scores are bimodal, and all 35 threes
+- **Trial counts are low.** Within a lane, one prompt is still worth 4.8–6.3 points; the added
+  all-eight T1–T4 aggregate has 128 prompt outcomes, so one outcome is 0.8 points, but it does not
+  create five independent trials of any model. Treat smaller lane-level differences as noise. The
+  L6 0-of-6 Algorithm result across all eight models is still unmeasurable as routing because its
+  nested `claude` has no sandbox credentials; it is not an unqualified regression.
+- **The judge bar is permissive.** A rubric passes at 3 of 5. Scores are bimodal, and all 41 threes
   count as passes — including at least one whose own reasoning says the answer failed the thing the
-  rubric asked about. Raising the bar to 4 would reclassify 16% of verdicts.
+  rubric asked about. Raising the bar to 4 would reclassify 15.6% of verdicts.
 - **v6's Algorithm result is confounded** by the credential boundary described above.
 - **Wall-clock is not comparable** across cells; they ran concurrently and contended for CPU. Token
   counts, cost and pass-rates are unaffected.
