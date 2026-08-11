@@ -23,7 +23,9 @@ The written-up findings are in **[`docs/report.html`](docs/report.html)**, gener
   control structurally cannot know the user.
 - **The Algorithm has stopped firing on Claude models.** On heavy work: L5 enters it 5–6 of 6;
   L6 0 of 6 (confounded — see below); L7 **0 of 6 on every Claude model and 6 of 6 on every GPT-5.6
-  model**, from the same prose instruction. That is instruction compliance, not capability.
+  model**, from the same prose instruction. That is instruction compliance, not capability — and
+  the difference from L5 is *register*, not presence: L5 says "MANDATORY FIRST ACTION", L7 says
+  "First action for such work".
 - **Cost is where versions separate.** L5 spends 10.9k output tokens per cell against L6's 2.0k and
   L7's 2.9k, for no measurable general-task gain.
 
@@ -225,12 +227,15 @@ raising the ceiling mid-analysis.
 
 Read these before quoting any number.
 
-- **Hook-driven routing is unmeasurable by this method, and L7 has no router to measure.** Only v6
-  registers a classifier hook; v7.28.3 retired modes and ships none. v6's router spawns a nested
-  `claude`, Claude Code passes no auth variable to hook subprocesses, and the sandbox `HOME` holds
-  no credentials by design — so it reaches its classifier and fails authentication. L6's
-  Algorithm-entry figure therefore measures *unrouted* model behaviour and must not be reported as
-  a regression. **L5 and L7 are unaffected**: both route by prose, which spawns nothing.
+- **Hook-driven routing is unmeasurable by this method, and L7 has no classifier to measure.** Only
+  v6 registers a mode/Algorithm classifier (`TheRouter.hook.ts`); v7.28.3 retired modes and ships
+  none. v6's router spawns a nested `claude`, Claude Code passes no auth variable to hook
+  subprocesses, and the sandbox `HOME` holds no credentials by design — so it reaches its classifier
+  and fails authentication. L6's Algorithm-entry figure therefore measures *unrouted* model
+  behaviour and must not be reported as a regression. **L5 and L7 are unaffected**: both carry the
+  instruction as prose, which spawns nothing. v7 does still register six `UserPromptSubmit` hooks,
+  but they are deterministic and make no model call, so the credential boundary never touches them —
+  and none of them decides whether to enter the Algorithm.
 - **A fresh v6/v7 install reports its own memory hooks as missing.** `MemoryHealthCheck` reads
   `settings.system.json` while `InstallHooks` merges into `settings.json` only, and the shipped
   `install/settings.system.json` registers none of the memory hooks. Every scaffolded cell carries

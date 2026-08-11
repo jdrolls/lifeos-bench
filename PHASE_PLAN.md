@@ -305,7 +305,8 @@ verified first on PATH and runnable. All of those were correct rejections; the m
 cwd.
 
 Consequence for the Phase 4 numbers: `algorithm_read` for L6 measures **unrouted model behavior**,
-not routing design, and for L7 it measures a version that has no router by design. Do not report
+not routing design, and for L7 it measures a version that has no mode/Algorithm classifier by
+design (its six UserPromptSubmit hooks are deterministic and none routes). Do not report
 either as a scaffold regression. L5 is unaffected because v5 routes via prose in `CLAUDE.md` — no
 subprocess, nothing to spawn. That asymmetry is itself the interesting result: prose routing
 survives an environment where hook-based routing cannot run.
@@ -420,7 +421,8 @@ here must be read. Items 5–8 remain and were re-ordered against the judged dat
    3. **Format compliance**, still observed varying run to run on an identical lane.
 
    ~~`routed_heavy` / `algorithm_entered`~~ are **obsolete** as confirmation targets: one version
-   has no router by design and the other's cannot authenticate in-sandbox, so more trials would
+   has no mode/Algorithm classifier by design and the other's cannot authenticate in-sandbox, so
+   more trials would
    only re-measure unrouted model behaviour with tighter error bars.
 
 6. **Raise the judge's discriminative power — cheapest remaining win, and it needs no new judge

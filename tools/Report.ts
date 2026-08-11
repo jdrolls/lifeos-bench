@@ -45,9 +45,11 @@ async function main() {
   // hook-routed versions is not a measurement of those scaffolds, and a reader who sees only
   // this file must not read it as one.
   lines.push("", "## Known limitations — read before quoting any number", "",
-    "**Hook-based routing is not measurable by this method, and L7 has no router to measure.**",
-    "Only v6 registers a classifier hook (`TheRouter.hook.ts`); v7.28.3 retired modes and ships",
-    "no router at all, so an L7 routing figure was never a measurement of routing. v6's router",
+    "**Hook-based routing is not measurable by this method, and L7 has no classifier to measure.**",
+    "Only v6 registers a mode/Algorithm classifier (`TheRouter.hook.ts`); v7.28.3 retired modes and",
+    "ships none, so an L7 routing figure was never a measurement of routing. v7 does still register",
+    "six UserPromptSubmit hooks, but they are deterministic, make no model call, and none of them",
+    "decides whether to enter the Algorithm. v6's router",
     "spawns a nested `claude`; Claude Code passes no auth variable to hook subprocesses and the",
     "sandbox HOME holds no credentials by design, so the router reaches its classifier and then",
     "fails authentication. That is a deliberate isolation invariant, not a bug to fix — so L6",

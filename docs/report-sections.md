@@ -30,7 +30,7 @@ what to do about all of it.
 | **RAW** | Bare Claude Code, empty config directory. No `CLAUDE.md`, no imports, no hooks, no Algorithm. The control. | n/a — there is no Algorithm to enter |
 | **L5** | **PAI v5.0.0** — the last release under the PAI name. Ships a complete `.claude` tree with identity imports already active and the mode templates written inline in `CLAUDE.md`. | **Prose.** `CLAUDE.md` tells the model, in words, to read the Algorithm before substantial work. Nothing is spawned. |
 | **L6** | **LifeOS v6.0.5** — three modes (ALGORITHM / NATIVE / MINIMAL), defined only in `LIFEOS_SYSTEM_PROMPT.md`. | **A classifier hook.** `TheRouter.hook.ts` calls a model on every prompt to choose the mode. |
-| **L7** | **LifeOS v7.28.3** — modes retired outright on 2026-07-11: *"One format, every response — there are no modes."* No classifier hook ships at all. | **Prose in the system prompt**, with no router behind it. |
+| **L7** | **LifeOS v7.28.3** — modes retired outright on 2026-07-11: *"One format, every response — there are no modes."* No mode or Algorithm classifier ships at all. | **Prose in the system prompt.** Six hooks still fire on every prompt; none of them decides whether to enter the Algorithm. |
 
 Each version is staged from its own upstream tag and installed by **its own installer** rather than
 a reimplementation, then given the same synthetic user profile. The GPT lanes run through the
@@ -110,7 +110,7 @@ work:
 |---|---|---|
 | **L5** — prose routing in `CLAUDE.md` | sonnet-5 **5 of 6** | terra **6 of 6** |
 | **L6** — classifier hook | sonnet-5 **0 of 6** | terra **0 of 6** |
-| **L7** — prose in the system prompt, no router | sonnet-5, haiku-4.5, opus-5, opus-4.8 all **0 of 6**; fable-5 1 of 6 | terra, luna, sol all **6 of 6** |
+| **L7** — prose in the system prompt, no classifier | sonnet-5, haiku-4.5, opus-5, opus-4.8 all **0 of 6**; fable-5 1 of 6 | terra, luna, sol all **6 of 6** |
 
 Three different things are happening here and they need separating:
 
@@ -121,17 +121,44 @@ Three different things are happening here and they need separating:
    model call, and this harness places no credentials inside a sandbox by design, so the classifier
    cannot authenticate and fails safe. What the result *does* show is that v6 kept **no prose
    fallback**: when the hook cannot run, nothing else carries the instruction.
-3. **v7's result is not confounded at all, and it is a model effect.** v7 ships no router. The
-   instruction lives in the system prompt as prose, identical for every model. Every GPT-5.6 lane
-   follows it 6 of 6. Every Claude lane ignores it 0 of 6.
+3. **v7's result is not confounded at all, and it is a model effect.** v7 ships **no mode or
+   Algorithm classifier** — nothing in it decides that a turn is an Algorithm run. Six hooks do
+   still fire on every prompt, but unlike v6's router they are deterministic and make no model
+   call, so the credential boundary never touches them. The instruction lives in the system prompt
+   as prose, identical for every model. Every GPT-5.6 lane follows it 6 of 6. Every Claude lane
+   ignores it 0 of 6.
+
+   The recorded artifacts confirm v7's hooks ran rather than failing quietly: in one L7 build cell
+   they tracked seven tool calls and wrote `runWasOpen: false`. The enforcement layer was live and
+   watching, and correctly observed that no Algorithm run was ever opened — because nothing in v7
+   tries to open one. It nudges after the fact; it does not route.
+
+### It is not prose versus no prose — it is register
+
+Both v5 and v7 carry the same instruction, pointing at the same file. They differ in how loudly
+they say it, and where:
+
+| | Where it lives | How it reads |
+|---|---|---|
+| **L5** | `CLAUDE.md`, under an explicit `ALGORITHM MODE` heading | **"MANDATORY FIRST ACTION:"** read the Algorithm — and "**Do NOT improvise** your own 'algorithm' format" |
+| **L7** | the system prompt, under `## The Algorithm` | "**First action for such work:** read the Algorithm…" |
+
+Same instruction, same imperative mood, no classifier behind either one. v5's emphatic form gets a
+Claude model to 5 of 6. v7's calm form gets every Claude model to 0 of 6 — while every GPT model
+follows the calm form perfectly.
+
+That inversion is worth sitting with, because it cuts against standard prompt hygiene. The usual
+advice for modern models is to strip `MUST` and `CRITICAL`, on the grounds that emphatic language
+causes over-triggering. v7 reads as though it took that advice, and on one vendor the behaviour
+left with the emphasis.
 
 So: *does the Algorithm still fire?* **On GPT models, always. On Claude models, only under v5.**
 And *is that the framework or the model?* **Both, in different places** — v7 exposed a
-model-compliance gap that v5's stronger prose had been papering over.
+model-compliance gap that v5's louder prose had been covering.
 
 The mirror-image check confirms nobody is merely over-triggering: on trivial prompts every version
 correctly stays out of the Algorithm, near-perfectly. The one exception is L5 on GPT, which enters
-it on half the trivial prompts too. v5's routing is louder in both directions.
+it on half the trivial prompts too. v5's instruction is louder in both directions.
 
 <!--section: id=versions title=Was an earlier version better?-->
 **Yes — at different things, and not the ones a version number implies.**
