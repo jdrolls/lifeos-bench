@@ -3,12 +3,14 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  algorithmReadTotals,
   buildReportOutputs,
   CHART_CAPTIONS,
   divergingBarChart,
   groupedBarChart,
   niceMax,
   loadSections,
+  modelFamily,
   parseSections,
   renderInline,
   renderMarkdownSubset,
@@ -44,8 +46,23 @@ describe("report prose helpers", () => {
     const directory = await mkdtemp(join(tmpdir(), "lifeos-bench-report-"));
     temporaryDirectories.push(directory);
     const sections = await loadSections(join(directory, "nested", "report-sections.md"));
-    expect(sections.map((section) => section.id)).toEqual(["question", "design", "degraded", "algorithm", "versions", "models", "unmeasured", "conclusions", "caveats", "appendix"]);
+    expect(sections.map((section) => section.id)).toEqual(["summary", "general", "personalization", "algorithm", "cost", "limits", "method", "audit", "appendix"]);
     expect(sections.every((section) => section.bodyHtml === "<p>TODO</p>")).toBe(true);
+  });
+});
+
+describe("report data derivation", () => {
+  test("uses the configured engine rather than a model-name prefix for families", () => {
+    expect(modelFamily({ id: "gpt-named-but-not-claudex", cli_arg: "x" })).toBe("Claude");
+    expect(modelFamily({ id: "arbitrary-name", cli_arg: "x", engine: "claudex" })).toBe("GPT");
+  });
+
+  test("sums Algorithm-read totals from the supplied lane metrics", () => {
+    expect(algorithmReadTotals([
+      { version: "L7", algorithm_entry_pass: 1, algorithm_entry_total: 6 },
+      { version: "L7", algorithm_entry_pass: 18, algorithm_entry_total: 42 },
+      { version: "L6", algorithm_entry_pass: 0, algorithm_entry_total: 48 },
+    ], "L7")).toBe("19/48");
   });
 });
 
@@ -138,7 +155,7 @@ describe("generated Markdown report", () => {
       expect(page.standalone).toContain(renderInline(caption));
     }
 
-    expect(markdown).toContain(`| ${data.run.cells_total} | ${data.run.statuses.success ?? 0} | ${data.run.cost_usd_total} | ${data.run.wall_clock_total_h} |`);
+    expect(markdown).toContain(`| ${data.run.cells_total} | ${data.run.statuses.success ?? 0} | ${data.run.api_equivalent_cost_usd} | ${data.run.cumulative_cell_hours} |`);
     expect(markdown).toContain("### The complete prompt set");
     for (const prompt of data.generated.prompts) expect(markdown).toContain(`| ${prompt.tier} | ${prompt.id} |`);
     expect(markdown).toContain("### Every lane");
@@ -148,21 +165,88 @@ describe("generated Markdown report", () => {
     const lane = (version: string, model: string) => data.lanes.find((entry) => entry.version === version && entry.model === model);
     const groupedRows = (pick: (entry: typeof data.lanes[number]) => number | null) => data.generated.versions.map((version) =>
       [version, ...models.map((model) => { const entry = lane(version, model); return entry ? pick(entry) : null; })]);
-    const group = (version: string, name: string) => data.tier_groups.find((entry) => entry.version === version && entry.scope === "bisect models" && entry.group === name);
+    const outcome = (version: string, scope: typeof data.outcome_summaries[number]["scope"]) => data.outcome_summaries.find((entry) => entry.version === version && entry.scope === scope);
     for (const version of data.generated.versions) {
-      expectChartRow(markdown, "Task pass@k on T1–T4 and on T5, by version", [version, group(version, "T1-T4")?.at_k ?? null, group(version, "T5")?.at_k ?? null]);
-      expectChartRow(markdown, "Mean output tokens generated per cell, by version", [version, data.versions.find((entry) => entry.version === version)?.output_tokens_mean ?? null]);
-      expectChartRow(markdown, "Enforcement-layer state files written per cell, by version", [version, data.versions.find((entry) => entry.version === version)?.hook_files_mean ?? null]);
+      expectChartRow(markdown, "Task outcomes succeeding in at least one trial, by comparable scope", [version, outcome(version, "all eight models")?.at_k ?? null, outcome(version, "matched two-model pool")?.at_k ?? null, outcome(version, "T5 configured pool")?.at_k ?? null]);
+      const matched = data.matched_versions.find((entry) => entry.version === version);
+      expectChartRow(markdown, "Mean CLI-reported output tokens per matched cell", [version, matched?.output_tokens_mean ?? null, matched?.cells ?? null]);
     }
-    for (const row of groupedRows((entry) => entry.format_pct)) expectChartRow(markdown, "Output-format compliance, by version and model", row);
-    for (const row of groupedRows((entry) => entry.algorithm_entry_pct)) expectChartRow(markdown, "Did the version enter the Algorithm before heavy work?", row);
-    for (const row of groupedRows((entry) => entry.algorithm_skip_pct)) expectChartRow(markdown, "Did it correctly STAY OUT of the Algorithm on trivial work?", row);
-    for (const row of data.raw_vs_l7) expectChartRow(markdown, "L7 minus the bare control, task pass@k", [row.model, row.delta_at_k]);
+    for (const row of groupedRows((entry) => entry.format_pct)) expectChartRow(markdown, "Configured format marker found on selected checked prompts", row);
+    for (const row of groupedRows((entry) => entry.algorithm_entry_pct)) expectChartRow(markdown, "Algorithm-directory Read observed on selected heavy prompts", row);
+    for (const row of groupedRows((entry) => entry.algorithm_skip_pct)) expectChartRow(markdown, "No Algorithm-directory Read observed on selected trivial prompts", row);
+    for (const row of data.raw_vs_l7) expectChartRow(markdown, "L7 minus RAW, T1–T4 outcomes succeeding in at least one trial (16 cases/model)", [row.model, row.prompt_model_cases, row.raw_pass, row.l7_pass, row.delta_pass, row.delta_at_k]);
     for (const [score, count] of Object.entries(data.judge.score_histogram)) expectChartRow(markdown, "Judge score distribution", [score, count]);
 
     expect(await readFile("docs/report.md", "utf8")).toBe(markdown);
     expect(markdown).not.toContain("<svg");
     expect((markdown.match(/^\*\*Chart data\*\*$/gm) ?? []).length).toBe(Object.keys(CHART_CAPTIONS).length);
+  }, 30_000);
+});
+
+describe("report-accuracy semantic regressions", () => {
+  test("keeps scoped outcomes, proxies, and limitations factual in both generated formats", async () => {
+    const { data, page, markdown } = await buildReportOutputs();
+    const outputs = [markdown, page.standalone, page.fragment];
+    const defects = JSON.parse(await readFile("docs/defects.json", "utf8")) as { defects: Array<{ id: number; defect: string; effect: string }> };
+
+    expect(defects.defects).toHaveLength(19);
+    expect(defects.defects.map((defect) => defect.id)).toEqual(Array.from({ length: 19 }, (_, index) => index + 1));
+    expect(defects.defects[0]!.defect).toContain("hook scripts/manifests");
+    expect(defects.defects[0]!.effect).toContain("zero hooks registered in active settings.json");
+
+    const sonnet = data.raw_vs_l7.find((row) => row.model === "sonnet-5")!;
+    expect(sonnet.prompt_model_cases).toBe(16);
+    expect(sonnet.raw_pass).toBe(15);
+    expect(sonnet.l7_pass).toBe(14);
+    expect(sonnet.delta_at_k_pp).toBe(-6.25);
+    expect(sonnet.delta_at_k).toBe(-6.3);
+    expect(data.raw_vs_l7.every((row) => row.prompt_model_cases === 16)).toBe(true);
+
+    const summaries = (scope: typeof data.outcome_summaries[number]["scope"]) => data.outcome_summaries.filter((row) => row.scope === scope);
+    expect(summaries("all eight models")).toHaveLength(3);
+    expect(summaries("all eight models").every((row) => row.prompt_model_cases === 128 && row.version !== "L5")).toBe(true);
+    expect(summaries("matched two-model pool")).toHaveLength(4);
+    expect(summaries("matched two-model pool").every((row) => row.prompt_model_cases === 32)).toBe(true);
+    expect(summaries("T5 configured pool").map((row) => [row.version, row.prompt_model_cases, row.at_k, row.all_k])).toEqual([
+      ["RAW", 10, 40, 10], ["L5", 10, 100, 60], ["L6", 10, 90, 70], ["L7", 10, 90, 60],
+    ]);
+
+    expect(data.matched_versions.map((row) => [row.version, row.cells, row.output_tokens_mean])).toEqual([
+      ["RAW", 68, 1941.1], ["L5", 68, 10906.4], ["L6", 68, 2035.9], ["L7", 68, 2626.9],
+    ]);
+    expect(data.algorithm_families.filter((row) => row.version === "L7").map((row) => [row.family, row.pass, row.total])).toEqual([["Claude", 1, 30], ["GPT", 18, 18]]);
+    expect(data.hook_evidence.find((row) => row.version === "RAW")!.runtime_execution).toBe("Unavailable");
+    for (const version of ["L5", "L6", "L7"]) {
+      const lanes = data.lanes.filter((lane) => lane.version === version);
+      expect(data.hook_evidence.find((row) => row.version === version)!.algorithm_directory_read)
+        .toBe(`${lanes.reduce((total, lane) => total + lane.algorithm_entry_pass, 0)}/${lanes.reduce((total, lane) => total + lane.algorithm_entry_total, 0)}`);
+    }
+    const l5Terra = data.lanes.find((row) => row.version === "L5" && row.model === "gpt-5.6-terra")!;
+    expect(l5Terra.algorithm_skip_pass).toBe(2);
+    expect(l5Terra.algorithm_skip_total).toBe(4);
+
+    for (const output of outputs) {
+      expect(output).toContain("Algorithm-directory Read observed");
+      expect(output).toContain("Configured format marker found on selected checked prompts");
+      expect(output).toContain("cumulative cell-hours");
+      expect(output).toContain("CLI-reported API-equivalent cost");
+      expect(output).toContain("Marker scrubbing");
+      expect(output).toContain("provenance");
+      expect(output).toContain("score-three rejudge was not implemented");
+      expect(output).toContain("memory, continuity, multi-turn");
+      expect(output).toContain("long-term outcomes");
+      expect(output).not.toContain("L6/L7 staged with zero hooks");
+      expect(output).not.toContain("*unrouted*");
+      expect(output).not.toContain("Eighteen defects");
+      expect(output).not.toContain("L6 at 2.0k");
+      expect(output).not.toContain("Every version passes the skip checks");
+    }
+
+    expect(markdown).toContain("T1–T4 ran across eight models; T5 ran only on Sonnet/Terra.");
+    expect(page.standalone).toContain("T1–T4 ran across eight models; T5 ran only on Sonnet/Terra.");
+    expect(markdown.indexOf("## Bottom line")).toBeLessThan(markdown.indexOf("## General single-turn tasks"));
+    expect(markdown.indexOf("## General single-turn tasks")).toBeLessThan(markdown.indexOf("## The narrow personalization test"));
+    expect(markdown.indexOf("## What this benchmark does not test")).toBeLessThan(markdown.indexOf("## What was tested and how"));
   }, 30_000);
 });
 

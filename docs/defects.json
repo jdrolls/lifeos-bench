@@ -1,10 +1,10 @@
 {
-  "note": "Harness and grader defects found and fixed while building this benchmark, each with a regression test. Listed because a benchmark's credibility rests on how its own errors were caught, not on the absence of errors. Source of truth for the table in README.md and in the generated report page.",
+  "note": "Nineteen harness, grader, and artifact-hygiene defects found while building this benchmark. Fixes use targeted regression tests where practical and fail-loud assertions or explicit publication caveats otherwise. Listed because a benchmark's credibility rests on how its own errors were caught and disclosed, not on claiming none remain. Source of truth for the generated report page.",
   "defects": [
     {
       "id": 1,
-      "defect": "L6/L7 staged with zero hooks",
-      "effect": "Their enforcement layer never ran; format compliance scored 0%"
+      "defect": "Pre-fix L6/L7 staging copied hook scripts/manifests without active settings registration",
+      "effect": "Those discarded runs had hook payloads but zero hooks registered in active settings.json, so they could not measure hook-enforced behavior. The published rerun registered and executed the hooks."
     },
     {
       "id": 2,
@@ -88,13 +88,13 @@
     },
     {
       "id": 18,
-      "defect": "Retired-lane artifacts left inside the scanned results tree",
-      "effect": "The retired private-fork lane's cells still sat in results/, and they legitimately contain real identity, so a full containment scan reported 101 violating files with zero in any live cell \u2014 a gate whose exit code no longer distinguished a sandbox escape from a retired lane's own content. Fixed by quarantining those trees, NOT by exempting them from the scanner"
+      "defect": "Retired-lane artifacts coexist with the live results tree",
+      "effect": "Retired FORK artifacts legitimately contain real identity. Each live lane root scans clean, but a whole results/ LeakCheck still reports 101 violating files because ignored retired copies remain there as well as in _archive. Publication verification must scan the explicit live lane roots until those duplicate retired paths are cleaned up."
     },
     {
       "id": 19,
       "defect": "Algorithm entry averaged with Algorithm skip",
-      "effect": "code:algorithm_read asks opposite questions on opposite prompts \u2014 enter the Algorithm for heavy work, stay out of it for trivial work. Every version passes the skip checks, so a single combined column dragged a 0-of-6 entry rate up to a passing-looking 40% and hid the largest effect in the dataset. Split into separate columns keyed on the golden set's own expect field"
+      "effect": "code:algorithm_read asks opposite questions on opposite prompts \u2014 observe an Algorithm-directory Read for heavy work, or no such Read for selected trivial work. A single combined column diluted the heavy-task result toward the trivial-task result. Split into separate columns keyed on the golden set's own expect field; L5 Terra remains the documented 2/4 skip exception."
     }
   ]
 }

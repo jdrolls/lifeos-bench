@@ -4141,165 +4141,395 @@
   "raw_vs_l7": [
     {
       "model": "sonnet-5",
-      "raw_at_k": 76.2,
-      "l7_at_k": 90.5,
-      "delta_at_k": 14.3,
-      "raw_all_k": 76.2,
-      "l7_all_k": 85.7,
-      "delta_all_k": 9.5
+      "prompt_model_cases": 16,
+      "raw_pass": 15,
+      "l7_pass": 14,
+      "delta_pass": -1,
+      "raw_at_k": 93.8,
+      "l7_at_k": 87.5,
+      "delta_at_k_pp": -6.25,
+      "delta_at_k": -6.3,
+      "raw_all_pass": 15,
+      "l7_all_pass": 14,
+      "delta_all_pass": -1,
+      "raw_all_k": 93.8,
+      "l7_all_k": 87.5,
+      "delta_all_k_pp": -6.25,
+      "delta_all_k": -6.3
     },
     {
       "model": "fable-5",
+      "prompt_model_cases": 16,
+      "raw_pass": 16,
+      "l7_pass": 16,
+      "delta_pass": 0,
       "raw_at_k": 100,
       "l7_at_k": 100,
+      "delta_at_k_pp": 0,
       "delta_at_k": 0,
+      "raw_all_pass": 16,
+      "l7_all_pass": 16,
+      "delta_all_pass": 0,
       "raw_all_k": 100,
       "l7_all_k": 100,
+      "delta_all_k_pp": 0,
       "delta_all_k": 0
     },
     {
       "model": "haiku-4-5",
+      "prompt_model_cases": 16,
+      "raw_pass": 14,
+      "l7_pass": 14,
+      "delta_pass": 0,
       "raw_at_k": 87.5,
       "l7_at_k": 87.5,
+      "delta_at_k_pp": 0,
       "delta_at_k": 0,
+      "raw_all_pass": 12,
+      "l7_all_pass": 11,
+      "delta_all_pass": -1,
       "raw_all_k": 75,
       "l7_all_k": 68.8,
-      "delta_all_k": -6.2
+      "delta_all_k_pp": -6.25,
+      "delta_all_k": -6.3
     },
     {
       "model": "opus-5",
+      "prompt_model_cases": 16,
+      "raw_pass": 16,
+      "l7_pass": 15,
+      "delta_pass": -1,
       "raw_at_k": 100,
       "l7_at_k": 93.8,
-      "delta_at_k": -6.2,
+      "delta_at_k_pp": -6.25,
+      "delta_at_k": -6.3,
+      "raw_all_pass": 15,
+      "l7_all_pass": 14,
+      "delta_all_pass": -1,
       "raw_all_k": 93.8,
       "l7_all_k": 87.5,
+      "delta_all_k_pp": -6.25,
       "delta_all_k": -6.3
     },
     {
       "model": "opus-4-8",
+      "prompt_model_cases": 16,
+      "raw_pass": 14,
+      "l7_pass": 15,
+      "delta_pass": 1,
       "raw_at_k": 87.5,
       "l7_at_k": 93.8,
+      "delta_at_k_pp": 6.25,
       "delta_at_k": 6.3,
+      "raw_all_pass": 14,
+      "l7_all_pass": 15,
+      "delta_all_pass": 1,
       "raw_all_k": 87.5,
       "l7_all_k": 93.8,
+      "delta_all_k_pp": 6.25,
       "delta_all_k": 6.3
     },
     {
       "model": "gpt-5.6-terra",
-      "raw_at_k": 90.5,
-      "l7_at_k": 90.5,
-      "delta_at_k": 0,
-      "raw_all_k": 71.4,
-      "l7_all_k": 76.2,
-      "delta_all_k": 4.8
+      "prompt_model_cases": 16,
+      "raw_pass": 16,
+      "l7_pass": 15,
+      "delta_pass": -1,
+      "raw_at_k": 100,
+      "l7_at_k": 93.8,
+      "delta_at_k_pp": -6.25,
+      "delta_at_k": -6.3,
+      "raw_all_pass": 15,
+      "l7_all_pass": 14,
+      "delta_all_pass": -1,
+      "raw_all_k": 93.8,
+      "l7_all_k": 87.5,
+      "delta_all_k_pp": -6.25,
+      "delta_all_k": -6.3
     },
     {
       "model": "gpt-5.6-luna",
+      "prompt_model_cases": 16,
+      "raw_pass": 16,
+      "l7_pass": 16,
+      "delta_pass": 0,
       "raw_at_k": 100,
       "l7_at_k": 100,
+      "delta_at_k_pp": 0,
       "delta_at_k": 0,
+      "raw_all_pass": 15,
+      "l7_all_pass": 16,
+      "delta_all_pass": 1,
       "raw_all_k": 93.8,
       "l7_all_k": 100,
-      "delta_all_k": 6.2
+      "delta_all_k_pp": 6.25,
+      "delta_all_k": 6.3
     },
     {
       "model": "gpt-5.6-sol",
+      "prompt_model_cases": 16,
+      "raw_pass": 16,
+      "l7_pass": 14,
+      "delta_pass": -2,
       "raw_at_k": 100,
       "l7_at_k": 87.5,
+      "delta_at_k_pp": -12.5,
       "delta_at_k": -12.5,
+      "raw_all_pass": 16,
+      "l7_all_pass": 13,
+      "delta_all_pass": -3,
       "raw_all_k": 100,
       "l7_all_k": 81.3,
-      "delta_all_k": -18.7
+      "delta_all_k_pp": -18.75,
+      "delta_all_k": -18.8
     }
   ],
-  "tier_groups": [
+  "outcome_summaries": [
     {
       "version": "RAW",
-      "scope": "bisect models",
-      "group": "T1-T4",
-      "prompts": 32,
+      "scope": "all eight models",
+      "tiers": "T1–T2–T3–T4",
+      "prompt_model_cases": 128,
+      "at_k_pass": 123,
+      "all_k_pass": 118,
+      "at_k": 96.1,
+      "all_k": 92.2
+    },
+    {
+      "version": "RAW",
+      "scope": "matched two-model pool",
+      "tiers": "T1–T2–T3–T4",
+      "prompt_model_cases": 32,
+      "at_k_pass": 31,
+      "all_k_pass": 30,
       "at_k": 96.9,
       "all_k": 93.8
     },
     {
       "version": "RAW",
-      "scope": "bisect models",
-      "group": "T5",
-      "prompts": 10,
+      "scope": "T5 configured pool",
+      "tiers": "T5",
+      "prompt_model_cases": 10,
+      "at_k_pass": 4,
+      "all_k_pass": 1,
       "at_k": 40,
       "all_k": 10
     },
     {
-      "version": "RAW",
-      "scope": "model sweep",
-      "group": "T1-T4",
-      "prompts": 96,
-      "at_k": 95.8,
-      "all_k": 91.7
-    },
-    {
       "version": "L5",
-      "scope": "bisect models",
-      "group": "T1-T4",
-      "prompts": 32,
+      "scope": "matched two-model pool",
+      "tiers": "T1–T2–T3–T4",
+      "prompt_model_cases": 32,
+      "at_k_pass": 31,
+      "all_k_pass": 29,
       "at_k": 96.9,
       "all_k": 90.6
     },
     {
       "version": "L5",
-      "scope": "bisect models",
-      "group": "T5",
-      "prompts": 10,
+      "scope": "T5 configured pool",
+      "tiers": "T5",
+      "prompt_model_cases": 10,
+      "at_k_pass": 10,
+      "all_k_pass": 6,
       "at_k": 100,
       "all_k": 60
     },
     {
       "version": "L6",
-      "scope": "bisect models",
-      "group": "T1-T4",
-      "prompts": 32,
+      "scope": "all eight models",
+      "tiers": "T1–T2–T3–T4",
+      "prompt_model_cases": 128,
+      "at_k_pass": 117,
+      "all_k_pass": 113,
+      "at_k": 91.4,
+      "all_k": 88.3
+    },
+    {
+      "version": "L6",
+      "scope": "matched two-model pool",
+      "tiers": "T1–T2–T3–T4",
+      "prompt_model_cases": 32,
+      "at_k_pass": 30,
+      "all_k_pass": 30,
       "at_k": 93.8,
       "all_k": 93.8
     },
     {
       "version": "L6",
-      "scope": "bisect models",
-      "group": "T5",
-      "prompts": 10,
+      "scope": "T5 configured pool",
+      "tiers": "T5",
+      "prompt_model_cases": 10,
+      "at_k_pass": 9,
+      "all_k_pass": 7,
       "at_k": 90,
       "all_k": 70
     },
     {
-      "version": "L6",
-      "scope": "model sweep",
-      "group": "T1-T4",
-      "prompts": 96,
-      "at_k": 90.6,
-      "all_k": 86.5
+      "version": "L7",
+      "scope": "all eight models",
+      "tiers": "T1–T2–T3–T4",
+      "prompt_model_cases": 128,
+      "at_k_pass": 119,
+      "all_k_pass": 113,
+      "at_k": 93,
+      "all_k": 88.3
     },
     {
       "version": "L7",
-      "scope": "bisect models",
-      "group": "T1-T4",
-      "prompts": 32,
+      "scope": "matched two-model pool",
+      "tiers": "T1–T2–T3–T4",
+      "prompt_model_cases": 32,
+      "at_k_pass": 29,
+      "all_k_pass": 28,
       "at_k": 90.6,
       "all_k": 87.5
     },
     {
       "version": "L7",
-      "scope": "bisect models",
-      "group": "T5",
-      "prompts": 10,
+      "scope": "T5 configured pool",
+      "tiers": "T5",
+      "prompt_model_cases": 10,
+      "at_k_pass": 9,
+      "all_k_pass": 6,
       "at_k": 90,
       "all_k": 60
+    }
+  ],
+  "matched_versions": [
+    {
+      "version": "RAW",
+      "cells": 68,
+      "output_tokens_mean": 1941.1,
+      "cost_usd_total": 12.73,
+      "wall_clock_mean_s": 53.76,
+      "hook_files_mean": null,
+      "statuses": {
+        "success": 68
+      },
+      "task_at_k_pct": 83.3,
+      "format_pct": null,
+      "algorithm_entry_pct": null
+    },
+    {
+      "version": "L5",
+      "cells": 68,
+      "output_tokens_mean": 10906.4,
+      "cost_usd_total": 143.54,
+      "wall_clock_mean_s": 324.86,
+      "hook_files_mean": 24,
+      "statuses": {
+        "success": 68
+      },
+      "task_at_k_pct": 97.6,
+      "format_pct": 70,
+      "algorithm_entry_pct": 91.7
+    },
+    {
+      "version": "L6",
+      "cells": 68,
+      "output_tokens_mean": 2035.9,
+      "cost_usd_total": 26.67,
+      "wall_clock_mean_s": 61.31,
+      "hook_files_mean": 21.8,
+      "statuses": {
+        "success": 68
+      },
+      "task_at_k_pct": 92.9,
+      "format_pct": 100,
+      "algorithm_entry_pct": 0
     },
     {
       "version": "L7",
-      "scope": "model sweep",
-      "group": "T1-T4",
-      "prompts": 96,
-      "at_k": 93.8,
-      "all_k": 88.5
+      "cells": 68,
+      "output_tokens_mean": 2626.9,
+      "cost_usd_total": 34.72,
+      "wall_clock_mean_s": 73.79,
+      "hook_files_mean": 25.1,
+      "statuses": {
+        "success": 68
+      },
+      "task_at_k_pct": 90.5,
+      "format_pct": 100,
+      "algorithm_entry_pct": 50
+    }
+  ],
+  "algorithm_families": [
+    {
+      "version": "L5",
+      "family": "Claude",
+      "pass": 5,
+      "total": 6,
+      "pct": 83.3
+    },
+    {
+      "version": "L5",
+      "family": "GPT",
+      "pass": 6,
+      "total": 6,
+      "pct": 100
+    },
+    {
+      "version": "L6",
+      "family": "Claude",
+      "pass": 0,
+      "total": 30,
+      "pct": 0
+    },
+    {
+      "version": "L6",
+      "family": "GPT",
+      "pass": 0,
+      "total": 18,
+      "pct": 0
+    },
+    {
+      "version": "L7",
+      "family": "Claude",
+      "pass": 1,
+      "total": 30,
+      "pct": 3.3
+    },
+    {
+      "version": "L7",
+      "family": "GPT",
+      "pass": 18,
+      "total": 18,
+      "pct": 100
+    }
+  ],
+  "hook_evidence": [
+    {
+      "version": "RAW",
+      "hook_payload": "No LifeOS payload",
+      "active_registration": "No LifeOS registration",
+      "runtime_execution": "Unavailable",
+      "routing_responsibility": "None",
+      "algorithm_directory_read": "Not applicable"
+    },
+    {
+      "version": "L5",
+      "hook_payload": "Present",
+      "active_registration": "Present",
+      "runtime_execution": "Captured state files",
+      "routing_responsibility": "Prose instruction, not a routing hook",
+      "algorithm_directory_read": "11/12"
+    },
+    {
+      "version": "L6",
+      "hook_payload": "Present",
+      "active_registration": "Present",
+      "runtime_execution": "Observed",
+      "routing_responsibility": "TheRouter classifier",
+      "algorithm_directory_read": "0/48"
+    },
+    {
+      "version": "L7",
+      "hook_payload": "Present",
+      "active_registration": "Six prompt-submit hooks",
+      "runtime_execution": "Observed",
+      "routing_responsibility": "None; AlgorithmNudge is advisory",
+      "algorithm_directory_read": "19/48"
     }
   ],
   "judge": {
@@ -4347,8 +4577,8 @@
       "success": 703,
       "timeout": 1
     },
-    "wall_clock_total_h": 20.38,
-    "cost_usd_total": 474.63,
+    "cumulative_cell_hours": 20.38,
+    "api_equivalent_cost_usd": 474.63,
     "pending_judge": 0
   }
 }

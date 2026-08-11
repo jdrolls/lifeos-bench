@@ -96,11 +96,11 @@ export function latestRows(...sources: string[]): Row[] {
  * prefix, because T4's trap graders have descriptive names and must still be classified.
  *
  * FOUR buckets, not two. `code:algorithm_read` asks opposite questions on opposite prompts:
- * on heavy work it asks whether the Algorithm was ENTERED, and on trivial work whether it was
- * correctly SKIPPED. Every version passes the skip checks — nothing reads an Algorithm to
- * answer "thanks, that's all for now" — so averaging the two together dilutes the entry rate
- * toward the skip rate and hides the single largest effect in this benchmark. That is the same
- * conflation mistake that produced the retracted v7 headline, one level down.
+ * on heavy work it asks whether an Algorithm-directory Read was observed, and on trivial work
+ * whether no such Read was observed. These are separate metrics because they ask opposite
+ * questions, not because every version passes skip: L5 Terra is the documented 2/4 exception.
+ * Averaging them would dilute the heavy-task result toward the trivial-task result and recreate
+ * the conflation behind the retracted v7 headline.
  */
 export function graderKinds(golden: GoldenSet): {
   routing: Set<string>; format: Set<string>; algorithmEntry: Set<string>; algorithmSkip: Set<string>;
@@ -152,7 +152,8 @@ export type LaneOptions = {
   config: BenchConfig;
   version: string;
   model: string;
-  tier?: string;
+  /** Restrict this lane to one tier or an explicitly matched tier set. */
+  tier?: string | string[];
   resultsRoot: string;
 };
 
@@ -169,9 +170,10 @@ export type LaneOptions = {
  * restricted lane up to 23.8 points and manufactured a published headline — "no model passes
  * 100% bare" — out of prompts that were never sent.
  */
-export function scheduledPrompts(golden: GoldenSet, config: BenchConfig, model: string, tier?: string): Prompt[] {
+export function scheduledPrompts(golden: GoldenSet, config: BenchConfig, model: string, tier?: string | string[]): Prompt[] {
+  const selectedTiers = tier === undefined ? null : new Set(Array.isArray(tier) ? tier : [tier]);
   return golden.prompts.filter((prompt) =>
-    (!tier || prompt.tier === tier) &&
+    (!selectedTiers || selectedTiers.has(prompt.tier)) &&
     (!config.tier_models?.[prompt.tier] || config.tier_models[prompt.tier].includes(model)));
 }
 

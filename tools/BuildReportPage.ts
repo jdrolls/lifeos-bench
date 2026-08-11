@@ -13,7 +13,8 @@ import {
 } from "./Aggregate.ts";
 import { ensure, exists, path } from "./Common.ts";
 
-const SECTION_IDS = ["question", "design", "degraded", "algorithm", "versions", "models", "unmeasured", "conclusions", "caveats", "appendix"] as const;
+// Reader-facing order: answers and caveats first, method details after the findings.
+const SECTION_IDS = ["summary", "general", "personalization", "algorithm", "cost", "limits", "method", "audit", "appendix"] as const;
 type SectionId = typeof SECTION_IDS[number];
 
 export type ReportSection = { id: string; title: string; bodyMarkdown: string; bodyHtml: string };
@@ -40,14 +41,31 @@ export type ReportData = {
   generated: { golden_set: string; grade_rows: number; versions: string[]; models: string[]; trials: Record<string, number>; tier_models: Record<string, string[]>;
     prompts: Array<{ id: string; tier: string; prompt: string; checks: string[] }> };
   lanes: LaneRecord[]; tiers: TierRecord[]; versions: VersionRecord[];
-  raw_vs_l7: Array<{ model: string; raw_at_k: Numeric; l7_at_k: Numeric; delta_at_k: Numeric; raw_all_k: Numeric; l7_all_k: Numeric; delta_all_k: Numeric }>;
-  tier_groups: Array<{ version: string; scope: string; group: string; prompts: number; at_k: Numeric; all_k: Numeric }>;
+  /** RAW/L7 use the same 16 T1–T4 prompt outcomes for every model. */
+  raw_vs_l7: Array<{ model: string; prompt_model_cases: number; raw_pass: number; l7_pass: number; delta_pass: number; raw_at_k: Numeric; l7_at_k: Numeric; delta_at_k_pp: number; delta_at_k: Numeric; raw_all_pass: number; l7_all_pass: number; delta_all_pass: number; raw_all_k: Numeric; l7_all_k: Numeric; delta_all_k_pp: number; delta_all_k: Numeric }>;
+  /** Outcome summaries only combine lanes that share the named model and tier scope. */
+  outcome_summaries: Array<{ version: string; scope: "all eight models" | "matched two-model pool" | "T5 configured pool"; tiers: string; prompt_model_cases: number; at_k_pass: number; all_k_pass: number; at_k: Numeric; all_k: Numeric }>;
+  /** The 68 cells shared by every version: configured T5 model pool, all five tiers. */
+  matched_versions: VersionRecord[];
+  algorithm_families: Array<{ version: string; family: "Claude" | "GPT"; pass: number; total: number; pct: Numeric }>;
+  hook_evidence: Array<{ version: string; hook_payload: string; active_registration: string; runtime_execution: string; routing_responsibility: string; algorithm_directory_read: string }>;
   judge: { rows: number; pass: number; fail: number; errors: number; score_histogram: Record<string, number>; by_version: Record<string, { rows: number; pass: number; fail: number; errors: number }> };
-  run: { cells_total: number; statuses: Record<string, number>; wall_clock_total_h: number; cost_usd_total: number; pending_judge: number };
+  run: { cells_total: number; statuses: Record<string, number>; cumulative_cell_hours: number; api_equivalent_cost_usd: number; pending_judge: number };
 };
 
 type BarValue = { label: string; value: Numeric };
 type GroupedSeries = { label: string; values: Numeric[] };
+
+/** The harness marks its GPT lanes explicitly; names are presentation labels, not classification. */
+export function modelFamily(model: BenchConfig["models"][number]): "Claude" | "GPT" {
+  return model.engine === "claudex" ? "GPT" : "Claude";
+}
+
+/** Sum the current per-lane Algorithm-read metrics rather than duplicating their totals in prose. */
+export function algorithmReadTotals(lanes: Array<Pick<LaneRecord, "version" | "algorithm_entry_pass" | "algorithm_entry_total">>, version: string): string {
+  const scoped = lanes.filter((lane) => lane.version === version);
+  return `${scoped.reduce((total, lane) => total + lane.algorithm_entry_pass, 0)}/${scoped.reduce((total, lane) => total + lane.algorithm_entry_total, 0)}`;
+}
 
 /** Round a shared Aggregate.ratio result for presentation without converting it to a string. */
 export function roundedPercent(numerator: number, denominator: number): Numeric {
@@ -97,10 +115,6 @@ function rollupVersion(version: string, lanes: LaneRecord[], source: LaneMetrics
     statuses: sumStatuses(lanes), task_at_k_pct: roundedPercent(anyPass, taskPrompts),
     format_pct: roundedPercent(formatPass, formatTotal), algorithm_entry_pct: roundedPercent(entryPass, entryTotal),
   };
-}
-
-function difference(left: Numeric, right: Numeric): Numeric {
-  return left === null || right === null ? null : rounded(right - left, 1);
 }
 
 async function judgeSummary(resultsRoot: string, versionOrder: string[]): Promise<ReportData["judge"]> {
@@ -155,32 +169,63 @@ export async function buildReportData(): Promise<ReportData> {
     const sources = versionLanes.map((lane) => laneSources.get(`${lane.version}\u0000${lane.model}`)!);
     return rollupVersion(version.id, versionLanes, sources);
   });
-  const raw_vs_l7 = config.models.flatMap((model) => {
-    const raw = lanes.find((lane) => lane.version === "RAW" && lane.model === model.id);
-    const l7 = lanes.find((lane) => lane.version === "L7" && lane.model === model.id);
-    return raw && l7 ? [{ model: model.id, raw_at_k: raw.task_at_k_pct, l7_at_k: l7.task_at_k_pct,
-      delta_at_k: difference(raw.task_at_k_pct, l7.task_at_k_pct), raw_all_k: raw.task_all_k_pct,
-      l7_all_k: l7.task_all_k_pct, delta_all_k: difference(raw.task_all_k_pct, l7.task_all_k_pct) }] : [];
+  const generalTiers = ["T1", "T2", "T3", "T4"];
+  const configuredT5Models = config.tier_models?.T5 ?? config.models.map((model) => model.id);
+  const allModels = config.models.map((model) => model.id);
+  const raw_vs_l7 = (await Promise.all(config.models.map(async (model) => {
+    const [raw, l7] = await Promise.all(["RAW", "L7"].map((version) =>
+      laneMetrics({ rows, golden, config, version, model: model.id, tier: generalTiers, resultsRoot })));
+    if (!raw.taskPrompts || raw.taskPrompts !== l7.taskPrompts) return null;
+    return {
+      model: model.id, prompt_model_cases: raw.taskPrompts,
+      raw_pass: raw.anyPass, l7_pass: l7.anyPass, delta_pass: l7.anyPass - raw.anyPass,
+      raw_at_k: roundedPercent(raw.anyPass, raw.taskPrompts), l7_at_k: roundedPercent(l7.anyPass, l7.taskPrompts),
+      delta_at_k_pp: ratio(l7.anyPass - raw.anyPass, raw.taskPrompts)!,
+      delta_at_k: roundedPercent(l7.anyPass - raw.anyPass, raw.taskPrompts),
+      raw_all_pass: raw.allPass, l7_all_pass: l7.allPass, delta_all_pass: l7.allPass - raw.allPass,
+      raw_all_k: roundedPercent(raw.allPass, raw.taskPrompts), l7_all_k: roundedPercent(l7.allPass, l7.taskPrompts),
+      delta_all_k_pp: ratio(l7.allPass - raw.allPass, raw.taskPrompts)!,
+      delta_all_k: roundedPercent(l7.allPass - raw.allPass, raw.taskPrompts),
+    };
+  }))).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+  const outcomeSpecs: Array<{ scope: ReportData["outcome_summaries"][number]["scope"]; tiers: string[]; models: string[] }> = [
+    { scope: "all eight models", tiers: generalTiers, models: allModels },
+    { scope: "matched two-model pool", tiers: generalTiers, models: configuredT5Models },
+    { scope: "T5 configured pool", tiers: ["T5"], models: configuredT5Models },
+  ];
+  const outcome_summaries = config.versions.flatMap((version) => outcomeSpecs.flatMap((spec) => {
+    const scoped = tiers.filter((tier) => tier.version === version.id && spec.tiers.includes(tier.tier) && spec.models.includes(tier.model));
+    // A scope is publishable only when every configured model actually ran it. L5 has no
+    // all-eight result; silently treating its two lanes as eight would be a false comparison.
+    if (new Set(scoped.map((tier) => tier.model)).size !== spec.models.length) return [];
+    const prompt_model_cases = scoped.reduce((total, tier) => total + tier.task_prompts, 0);
+    const at_k_pass = scoped.reduce((total, tier) => total + tier.any_pass, 0);
+    const all_k_pass = scoped.reduce((total, tier) => total + tier.all_pass, 0);
+    return [{ version: version.id, scope: spec.scope, tiers: spec.tiers.join("–"), prompt_model_cases, at_k_pass, all_k_pass,
+      at_k: roundedPercent(at_k_pass, prompt_model_cases), all_k: roundedPercent(all_k_pass, prompt_model_cases) }];
+  }));
+
+  const matched_versions = config.versions.map((version) => {
+    const versionLanes = lanes.filter((lane) => lane.version === version.id && configuredT5Models.includes(lane.model));
+    const sources = versionLanes.map((lane) => laneSources.get(`${lane.version}\u0000${lane.model}`)!);
+    return rollupVersion(version.id, versionLanes, sources);
   });
-  // Every lane ran T1-T4; only the two bisect models ran T5. Rolling those together would
-  // compare a version measured on 21 prompts against one measured on 16, so the two scopes are
-  // reported separately and never summed.
-  const bisectModels = config.tier_models?.T5 ?? config.models.map((model) => model.id);
-  const tier_groups = config.versions.flatMap((version) => {
-    const groups: Array<{ label: string; tiers: string[]; models: string[]; scope: string }> = [
-      { label: "T1-T4", tiers: ["T1", "T2", "T3", "T4"], models: bisectModels, scope: "bisect models" },
-      { label: "T5", tiers: ["T5"], models: bisectModels, scope: "bisect models" },
-      { label: "T1-T4", tiers: ["T1", "T2", "T3", "T4"], models: config.models.map((model) => model.id).filter((model) => !bisectModels.includes(model)), scope: "model sweep" },
-    ];
-    return groups.flatMap((group) => {
-      const rows = tiers.filter((tier) => tier.version === version.id && group.tiers.includes(tier.tier) && group.models.includes(tier.model));
-      const prompts = rows.reduce((total, tier) => total + tier.task_prompts, 0);
-      if (!prompts) return [];
-      const any = rows.reduce((total, tier) => total + tier.any_pass, 0);
-      const all = rows.reduce((total, tier) => total + tier.all_pass, 0);
-      return [{ version: version.id, scope: group.scope, group: group.label, prompts, at_k: roundedPercent(any, prompts), all_k: roundedPercent(all, prompts) }];
-    });
-  });
+  const algorithm_families = config.versions.flatMap((version) =>
+    (["Claude", "GPT"] as const).flatMap((family) => {
+      const models = config.models.filter((model) => modelFamily(model) === family).map((model) => model.id);
+      const sources = models.map((model) => laneSources.get(`${version.id}\u0000${model}`)).filter((source): source is LaneMetrics => !!source);
+      const pass = sources.reduce((total, source) => total + source.algorithmEntryPass, 0);
+      const total = sources.reduce((count, source) => count + source.algorithmEntryTotal, 0);
+      return total ? [{ version: version.id, family, pass, total, pct: roundedPercent(pass, total) }] : [];
+    }));
+
+  const hook_evidence: ReportData["hook_evidence"] = [
+    { version: "RAW", hook_payload: "No LifeOS payload", active_registration: "No LifeOS registration", runtime_execution: "Unavailable", routing_responsibility: "None", algorithm_directory_read: "Not applicable" },
+    { version: "L5", hook_payload: "Present", active_registration: "Present", runtime_execution: "Captured state files", routing_responsibility: "Prose instruction, not a routing hook", algorithm_directory_read: algorithmReadTotals(lanes, "L5") },
+    { version: "L6", hook_payload: "Present", active_registration: "Present", runtime_execution: "Observed", routing_responsibility: "TheRouter classifier", algorithm_directory_read: algorithmReadTotals(lanes, "L6") },
+    { version: "L7", hook_payload: "Present", active_registration: "Six prompt-submit hooks", runtime_execution: "Observed", routing_responsibility: "None; AlgorithmNudge is advisory", algorithm_directory_read: algorithmReadTotals(lanes, "L7") },
+  ];
 
   const allSources = [...laneSources.values()];
   const allCells = allSources.reduce((total, metric) => total + metric.cells, 0);
@@ -198,9 +243,9 @@ export async function buildReportData(): Promise<ReportData> {
         checks: prompt.expectations.map((expectation) => expectation.name ?? expectation.grader),
       })),
     },
-    lanes, tiers, versions, raw_vs_l7, tier_groups,
+    lanes, tiers, versions, raw_vs_l7, outcome_summaries, matched_versions, algorithm_families, hook_evidence,
     judge: await judgeSummary(resultsRoot, config.versions.map((version) => version.id)),
-    run: { cells_total: allCells, statuses: sumStatuses(lanes), wall_clock_total_h: rounded(allWall / 3_600_000, 2), cost_usd_total: rounded(allCost, 2), pending_judge: rows.filter((row) => row.status === "pending_judge").length },
+    run: { cells_total: allCells, statuses: sumStatuses(lanes), cumulative_cell_hours: rounded(allWall / 3_600_000, 2), api_equivalent_cost_usd: rounded(allCost, 2), pending_judge: rows.filter((row) => row.status === "pending_judge").length },
   };
 }
 
@@ -395,14 +440,13 @@ function figure(svg: string, caption: string): string {
 }
 
 export const CHART_CAPTIONS = {
-  general: "Left group: the four general tiers. Right group: personalization. The control (RAW) leads on general work and collapses on personalization; every LifeOS version does the reverse.",
-  algorithmEntry: "Three heavy prompts × two trials = six checks per lane. RAW has no Algorithm, so it has no bar. **L5 enters reliably. L6 is 0 of 6 across every model, with the nested-`claude` credential confound. Under L7, four Claude models are 0 of 6, Fable is 1 of 6, and every GPT model is 6 of 6.**",
-  algorithmSkip: "The same grader asking the opposite question on four trivial prompts. Near-perfect everywhere — which is exactly why averaging it with the chart above hides the result.",
-  tokens: "What each version costs in generated tokens for the same 21 prompts. L5 spends 4–5× what L6, L7 or the bare control spend.",
-  format: "Whether each response opened with the version's own documented format contract. The control has none to honour, so it has no bar.",
-  delta: "Positive means LifeOS 7 beat the bare control on that model. One prompt is worth 4.8–6.3 points here, so only sonnet-5 and gpt-5.6-sol sit outside the noise band.",
-  hooks: "Evidence that the hook layer actually ran, recorded per cell. The control registers no hooks and writes nothing; every LifeOS version writes 22–25 files per cell.",
-  judge: "Scores are bimodal, and the pass bar is 3 of 5 — so every score of 3 counts as a pass. The chart data carries the current distribution; the caveat above records the exact threshold sensitivity.",
+  general: "Each scope has its own denominator: 128 all-eight T1–T4 prompt-model cases where available, 32 matched two-model T1–T4 cases, and 10 configured-pool T5 cases. They are never pooled across unequal lane sets.",
+  algorithmEntry: "Three heavy prompts × two trials = six checks per model. L6 is 0 of 6 across every model, but its nested classifier cannot authenticate in the sandbox. L7 has no classifier: its Algorithm-read totals are Claude 1/30 and GPT 18/18.",
+  algorithmSkip: "The opposite check on trivial work is reported separately; combining it with Algorithm entry would hide the entry result.",
+  tokens: "CLI-reported output-token proxy for the 68 cells shared by every version (the configured two-model T5 pool across all tiers). It is not a provider invoice.",
+  format: "Configured marker found by the selected-prompt, unanchored full-message regex. The control has no configured marker, so it has no bar.",
+  delta: "Count-derived difference on the same 16 T1–T4 prompt outcomes per model: positive means L7 passed more outcomes than RAW.",
+  judge: "Scores are bimodal, and the pass bar is 3 of 5 — so every score of 3 counts as a pass.",
 } as const;
 
 function markdownCell(value: unknown): string {
@@ -420,14 +464,14 @@ function markdownChart(title: string, caption: string, headers: string[], rows: 
 }
 function statusText(statuses: Record<string, number>): string { return Object.entries(statuses).map(([status, count]) => `${status}: ${count}`).join(", ") || "—"; }
 const GLOSSARY_DESCRIPTIONS: Record<string, string> = {
-    algorithm_entry_pct: "Share of HEAVY prompts where the version read its Algorithm before starting work. Three prompts, two trials each.",
-    algorithm_skip_pct: "Share of TRIVIAL prompts where it correctly did NOT read the Algorithm. Every version passes these, which is why they are a separate column.",
+    algorithm_entry_pct: "Share of selected heavy prompt opportunities where an Algorithm-directory Read was observed. This transcript proxy does not establish read order, an ISA/run, or Algorithm completion.",
+    algorithm_skip_pct: "Share of selected trivial prompt opportunities where no Algorithm-directory Read was observed. This asks the opposite question from the heavy-task proxy and is reported separately; L5 Terra is the documented 2/4 exception.",
     mode_marker_pct: "Share of responses carrying the version's own documented mode banner. Null for versions that ship no modes.",
-    format_pct: "Share of applicable output-format checks that passed.",
+    format_pct: "Configured format marker found on selected checked prompts. The grader searches the full final message with an unanchored regex; this does not establish first-line placement or whole-version compliance.",
     task_prompts: "Prompts this lane was scheduled to run — restricted tiers are absent from the lanes that never ran them, so this is the pass-rate denominator.",
     task_at_k_pct: "Share of scheduled task prompts with at least one passing trial.", task_all_k_pct: "Share of scheduled task prompts whose trials all passed.",
-    output_tokens_mean: "Mean generated output tokens per recorded cell.", wall_clock_mean_s: "Mean recorded wall-clock seconds per cell.",
-    cost_usd_total: "Recorded total cost in US dollars.", hook_files_mean: "Mean hook-state files written where recorded.",
+    output_tokens_mean: "Mean CLI-reported output tokens per recorded cell; a usage proxy, not billed usage.", wall_clock_mean_s: "Mean recorded wall-clock seconds per cell; concurrent cells make it non-comparable as elapsed time.",
+    cost_usd_total: "CLI-reported API-equivalent cost in US dollars; not an invoice or subscription charge.", hook_files_mean: "Mean captured hook-state files written where recorded; this does not prove every registered hook executed or routed.",
     cells: "Cells with a readable meta.json record.", statuses: "Histogram of meta.status values.",
 };
 function glossary(data: ReportData): string {
@@ -453,52 +497,53 @@ async function defectTable(): Promise<string> {
 export async function renderReportPage(data: ReportData, sections: ReportSection[]): Promise<{ standalone: string; fragment: string }> {
   const matrix = table(["Version", ...data.generated.models], data.generated.versions.map((version) => [version, ...data.generated.models.map((model) => data.lanes.some((lane) => lane.version === version && lane.model === model) ? "run" : "—")]));
   const trials = table(["Tier", "Trials", "Models"], Object.entries(data.generated.trials).map(([tier, trial]) => [tier, trial, data.generated.tier_models[tier]?.join(", ") ?? "all lane models"]));
-  const runTiles = `<div class="tiles"><div><b>${data.run.cells_total}</b><span>recorded cells</span></div><div><b>${data.run.statuses.success ?? 0}</b><span>successful cells</span></div><div><b>$${data.run.cost_usd_total}</b><span>recorded cost</span></div><div><b>${data.run.wall_clock_total_h} h</b><span>recorded wall-clock</span></div></div>`;
+  const runTiles = `<div class="tiles"><div><b>${data.run.cells_total}</b><span>recorded cells</span></div><div><b>${data.run.statuses.success ?? 0}</b><span>successful cells</span></div><div><b>$${data.run.api_equivalent_cost_usd}</b><span>CLI-reported API-equivalent cost</span></div><div><b>${data.run.cumulative_cell_hours} h</b><span>cumulative cell-hours</span></div></div>`;
   const versionRuns = table(["Version", "Cells", "Statuses"], data.versions.map((version) => [version.version, version.cells, statusText(version.statuses)]));
   const modelLabels = data.generated.models.filter((model) => data.lanes.some((lane) => lane.model === model));
   const laneFor = (version: string, model: string) => data.lanes.find((lane) => lane.version === version && lane.model === model);
   const byVersion = (pick: (lane: LaneRecord) => Numeric) =>
     data.generated.versions.map((version) => ({ label: version, values: modelLabels.map((model) => { const lane = laneFor(version, model); return lane ? pick(lane) : null; }) }));
 
-  const groupRow = (version: string, scope: string, group: string) =>
-    data.tier_groups.find((entry) => entry.version === version && entry.scope === scope && entry.group === group);
-  const tierGroupTable = table(
-    ["Version", "Scope", "Tiers", "Prompts", "pass@k %", "pass^k %"],
-    data.tier_groups.map((entry) => [entry.version, entry.scope, entry.group, entry.prompts, entry.at_k, entry.all_k]));
+  const outcome = (version: string, scope: ReportData["outcome_summaries"][number]["scope"]) =>
+    data.outcome_summaries.find((entry) => entry.version === version && entry.scope === scope);
+  const outcomeTable = table(
+    ["Version", "Scope", "Tiers", "Prompt-model cases", "Succeeded in at least one trial", "Succeeded in every trial", "At least one trial %", "Every trial %"],
+    data.outcome_summaries.map((entry) => [entry.version, entry.scope, entry.tiers, entry.prompt_model_cases, entry.at_k_pass, entry.all_k_pass, entry.at_k, entry.all_k]));
   const generalChart = figure(
-    groupedBarChart("Task pass@k on T1–T4 and on T5, by version", ["T1–T4 (bisect models)", "T5 personalization"],
+    groupedBarChart("Task outcomes succeeding in at least one trial, by comparable scope", ["T1–T4 all eight", "T1–T4 matched", "T5 configured pool"],
       data.generated.versions.map((version) => ({ label: version,
-        values: [groupRow(version, "bisect models", "T1-T4")?.at_k ?? null, groupRow(version, "bisect models", "T5")?.at_k ?? null] }))),
+        values: [outcome(version, "all eight models")?.at_k ?? null, outcome(version, "matched two-model pool")?.at_k ?? null, outcome(version, "T5 configured pool")?.at_k ?? null] }))),
     CHART_CAPTIONS.general);
 
   const algorithmChart = figure(
-    groupedBarChart("Did the version enter the Algorithm before heavy work?", modelLabels, byVersion((lane) => lane.algorithm_entry_pct)),
+    groupedBarChart("Algorithm-directory Read observed on selected heavy prompts", modelLabels, byVersion((lane) => lane.algorithm_entry_pct)),
     CHART_CAPTIONS.algorithmEntry);
   const algorithmSkipChart = figure(
-    groupedBarChart("Did it correctly STAY OUT of the Algorithm on trivial work?", modelLabels, byVersion((lane) => lane.algorithm_skip_pct)),
+    groupedBarChart("No Algorithm-directory Read observed on selected trivial prompts", modelLabels, byVersion((lane) => lane.algorithm_skip_pct)),
     CHART_CAPTIONS.algorithmSkip);
 
+  const familyAlgorithmTable = table(["Version", "Model family", "Algorithm-directory Reads observed", "Share %"],
+    data.algorithm_families.map((entry) => [entry.version, entry.family, `${entry.pass}/${entry.total}`, entry.pct]));
+  const hookEvidenceTable = table(["Version", "Hook payload present", "Active registration present", "Runtime execution evidence", "Routing responsibility", "Algorithm-directory Read observed"],
+    data.hook_evidence.map((entry) => [entry.version, entry.hook_payload, entry.active_registration, entry.runtime_execution, entry.routing_responsibility, entry.algorithm_directory_read]), true);
   const tokenChart = figure(
-    simpleBarChart("Mean output tokens generated per cell, by version", data.versions.map((version) => ({ label: version.version, value: version.output_tokens_mean }))),
+    simpleBarChart("Mean CLI-reported output tokens per matched cell", data.matched_versions.map((version) => ({ label: version.version, value: version.output_tokens_mean }))),
     CHART_CAPTIONS.tokens);
   const formatChart = figure(
-    groupedBarChart("Output-format compliance, by version and model", modelLabels, byVersion((lane) => lane.format_pct)),
+    groupedBarChart("Configured format marker found on selected checked prompts", modelLabels, byVersion((lane) => lane.format_pct)),
     CHART_CAPTIONS.format);
 
   const deltaChart = figure(
-    divergingBarChart("L7 minus the bare control, task pass@k", data.raw_vs_l7.map((row) => ({ label: row.model, value: row.delta_at_k }))),
+    divergingBarChart("L7 minus RAW, T1–T4 outcomes succeeding in at least one trial (16 cases/model)", data.raw_vs_l7.map((row) => ({ label: row.model, value: row.delta_at_k }))),
     CHART_CAPTIONS.delta);
 
-  const hookChart = figure(
-    simpleBarChart("Enforcement-layer state files written per cell, by version", data.versions.map((version) => ({ label: version.version, value: version.hook_files_mean }))),
-    CHART_CAPTIONS.hooks);
   const judgeChart = figure(
     simpleBarChart("Judge score distribution", Object.entries(data.judge.score_histogram).map(([score, count]) => ({ label: score, value: count }))),
     CHART_CAPTIONS.judge);
 
-  const laneHeaders = ["Version", "Model", "Prompts", "Algorithm entered %", "Algorithm skipped %", "Mode markers %", "Format %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD", "Hook files mean", "Statuses"];
+  const laneHeaders = ["Version", "Model", "Prompts", "Algorithm-directory Read observed %", "No Algorithm-directory Read observed %", "Mode markers %", "Format marker found %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD", "Hook files mean", "Statuses"];
   const laneTable = table(laneHeaders, data.lanes.map((lane) => [lane.version, lane.model, lane.task_prompts, lane.algorithm_entry_pct, lane.algorithm_skip_pct, lane.mode_marker_pct, lane.format_pct, lane.task_at_k_pct, lane.task_all_k_pct, lane.cells, lane.output_tokens_mean, lane.wall_clock_mean_s, lane.cost_usd_total, lane.hook_files_mean, statusText(lane.statuses)]));
-  const tierTable = table(["Version", "Model", "Tier", "Prompts", "Algorithm entered %", "Algorithm skipped %", "Mode markers %", "Format %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD"], data.tiers.map((tier) => [tier.version, tier.model, tier.tier, tier.task_prompts, tier.algorithm_entry_pct, tier.algorithm_skip_pct, tier.mode_marker_pct, tier.format_pct, tier.task_at_k_pct, tier.task_all_k_pct, tier.cells, tier.output_tokens_mean, tier.wall_clock_mean_s, tier.cost_usd_total]));
+  const tierTable = table(["Version", "Model", "Tier", "Prompts", "Algorithm-directory Read observed %", "No Algorithm-directory Read observed %", "Mode markers %", "Format marker found %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD"], data.tiers.map((tier) => [tier.version, tier.model, tier.tier, tier.task_prompts, tier.algorithm_entry_pct, tier.algorithm_skip_pct, tier.mode_marker_pct, tier.format_pct, tier.task_at_k_pct, tier.task_all_k_pct, tier.cells, tier.output_tokens_mean, tier.wall_clock_mean_s, tier.cost_usd_total]));
   const defects = await defectTable();
   // Three theme states, not two. An explicit viewer choice stamps data-theme on the root; the
   // default "system" setting stamps nothing, so only prefers-color-scheme separates the two
@@ -551,16 +596,15 @@ footer { color:var(--muted); padding:1rem 0 3rem; font-size:.82rem; }
 </style>`;
   const promptTable = table(["Tier", "Prompt id", "What the model was asked", "Checks"],
     data.generated.prompts.map((prompt) => [prompt.tier, prompt.id, prompt.prompt, prompt.checks.join(", ")]), true);
-  const body = `<main><header><h1>Does LifeOS actually help?</h1><p>Three released versions of LifeOS measured against a bare control, across eight models, on a frozen set of 21 prompts · golden set ${escapeHtml(data.generated.golden_set)} · aggregate results only</p></header>
-<section id="question">${narrative(sections, "question")}</section>
-<section id="design">${narrative(sections, "design")}<h3>The versions under test</h3>${matrix}<h3>Trials per tier</h3>${trials}<h3>The complete prompt set</h3>${promptTable}<h3>What was run</h3>${runTiles}${versionRuns}${hookChart}</section>
-<section id="degraded">${narrative(sections, "degraded")}${generalChart}<h3>Pass-rates by tier group</h3>${tierGroupTable}${formatChart}</section>
-<section id="algorithm">${narrative(sections, "algorithm")}${algorithmChart}${algorithmSkipChart}</section>
-<section id="versions">${narrative(sections, "versions")}${tokenChart}</section>
-<section id="models">${narrative(sections, "models")}${deltaChart}</section>
-<section id="unmeasured">${narrative(sections, "unmeasured")}</section>
-<section id="conclusions">${narrative(sections, "conclusions")}</section>
-<section id="caveats">${narrative(sections, "caveats")}${judgeChart}${defects}</section>
+  const body = `<main><header><h1>Does LifeOS actually help?</h1><p>T1–T4 ran across eight models; T5 ran only on Sonnet/Terra. Three released LifeOS versions were measured against a bare control on a frozen 21-prompt set · golden set ${escapeHtml(data.generated.golden_set)} · aggregate results only</p></header>
+<section id="summary">${narrative(sections, "summary")}</section>
+<section id="general">${narrative(sections, "general")}${generalChart}<h3>Comparable outcome summaries</h3>${outcomeTable}${formatChart}</section>
+<section id="personalization">${narrative(sections, "personalization")}</section>
+<section id="algorithm">${narrative(sections, "algorithm")}${familyAlgorithmTable}${algorithmChart}${algorithmSkipChart}</section>
+<section id="cost">${narrative(sections, "cost")}${tokenChart}${deltaChart}</section>
+<section id="limits">${narrative(sections, "limits")}</section>
+<section id="method">${narrative(sections, "method")}<h3>The versions under test</h3>${matrix}<h3>Trials per tier</h3>${trials}<h3>The complete prompt set</h3>${promptTable}<h3>What was run</h3>${runTiles}${versionRuns}<h3>Hook evidence</h3>${hookEvidenceTable}</section>
+<section id="audit">${narrative(sections, "audit")}${judgeChart}${defects}</section>
 <section id="appendix">${narrative(sections, "appendix")}<h3>Metric glossary</h3>${glossary(data)}<h3>Every lane</h3>${laneTable}<h3>Every lane by tier</h3>${tierTable}</section>
 <footer>Every figure is regenerated from the recorded per-cell artifacts by one shared aggregation module. No individual transcripts or workspaces are included.</footer></main>`;
   const title = "lifeos-bench — does the scaffolding actually help?";
@@ -588,23 +632,41 @@ export async function renderReportMarkdown(data: ReportData, sections: ReportSec
   // same ReportData lookup as their visual counterparts.
   const chartRows = (pick: (lane: LaneRecord) => Numeric) => data.generated.versions.map((version) =>
     [version, ...modelLabels.map((model) => { const lane = laneFor(version, model); return lane ? pick(lane) : null; })]);
-  const groupRow = (version: string, scope: string, group: string) =>
-    data.tier_groups.find((entry) => entry.version === version && entry.scope === scope && entry.group === group);
+  const outcome = (version: string, scope: ReportData["outcome_summaries"][number]["scope"]) =>
+    data.outcome_summaries.find((entry) => entry.version === version && entry.scope === scope);
   const generalRows = data.generated.versions.map((version) => [version,
-    groupRow(version, "bisect models", "T1-T4")?.at_k ?? null,
-    groupRow(version, "bisect models", "T5")?.at_k ?? null]);
-  const tierGroupRows = data.tier_groups.map((entry) => [entry.version, entry.scope, entry.group, entry.prompts, entry.at_k, entry.all_k]);
-  const laneHeaders = ["Version", "Model", "Prompts", "Algorithm entered %", "Algorithm skipped %", "Mode markers %", "Format %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD", "Hook files mean", "Statuses"];
+    outcome(version, "all eight models")?.at_k ?? null,
+    outcome(version, "matched two-model pool")?.at_k ?? null,
+    outcome(version, "T5 configured pool")?.at_k ?? null]);
+  const outcomeRows = data.outcome_summaries.map((entry) => [entry.version, entry.scope, entry.tiers, entry.prompt_model_cases, entry.at_k_pass, entry.all_k_pass, entry.at_k, entry.all_k]);
+  const familyAlgorithmRows = data.algorithm_families.map((entry) => [entry.version, entry.family, `${entry.pass}/${entry.total}`, entry.pct]);
+  const laneHeaders = ["Version", "Model", "Prompts", "Algorithm-directory Read observed %", "No Algorithm-directory Read observed %", "Mode markers %", "Format marker found %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD", "Hook files mean", "Statuses"];
   const laneRows = data.lanes.map((lane) => [lane.version, lane.model, lane.task_prompts, lane.algorithm_entry_pct, lane.algorithm_skip_pct, lane.mode_marker_pct, lane.format_pct, lane.task_at_k_pct, lane.task_all_k_pct, lane.cells, lane.output_tokens_mean, lane.wall_clock_mean_s, lane.cost_usd_total, lane.hook_files_mean, statusText(lane.statuses)]);
-  const tierHeaders = ["Version", "Model", "Tier", "Prompts", "Algorithm entered %", "Algorithm skipped %", "Mode markers %", "Format %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD"];
+  const tierHeaders = ["Version", "Model", "Tier", "Prompts", "Algorithm-directory Read observed %", "No Algorithm-directory Read observed %", "Mode markers %", "Format marker found %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD"];
   const tierRows = data.tiers.map((tier) => [tier.version, tier.model, tier.tier, tier.task_prompts, tier.algorithm_entry_pct, tier.algorithm_skip_pct, tier.mode_marker_pct, tier.format_pct, tier.task_at_k_pct, tier.task_all_k_pct, tier.cells, tier.output_tokens_mean, tier.wall_clock_mean_s, tier.cost_usd_total]);
   const defects = await loadDefectData();
 
   const parts = [
     "# Does LifeOS actually help?",
-    `Three released versions of LifeOS measured against a bare control, across eight models, on a frozen set of 21 prompts · golden set ${data.generated.golden_set} · aggregate results only`,
-    markdownNarrative(sections, "question"),
-    markdownNarrative(sections, "design"),
+    `T1–T4 ran across eight models; T5 ran only on Sonnet/Terra. Three released LifeOS versions were measured against a bare control on a frozen 21-prompt set · golden set ${data.generated.golden_set} · aggregate results only`,
+    markdownNarrative(sections, "summary"),
+    markdownNarrative(sections, "general"),
+    markdownChart("Task outcomes succeeding in at least one trial, by comparable scope", CHART_CAPTIONS.general, ["Version", "T1–T4 all eight %", "T1–T4 matched %", "T5 configured-pool %"], generalRows),
+    "### Comparable outcome summaries",
+    markdownTable(["Version", "Scope", "Tiers", "Prompt-model cases", "Succeeded in at least one trial", "Succeeded in every trial", "At least one trial %", "Every trial %"], outcomeRows),
+    markdownChart("Configured format marker found on selected checked prompts", CHART_CAPTIONS.format, ["Version", ...modelLabels], chartRows((lane) => lane.format_pct)),
+
+    markdownNarrative(sections, "personalization"),
+    markdownNarrative(sections, "algorithm"),
+    "### Algorithm-read totals by model family",
+    markdownTable(["Version", "Model family", "Algorithm-directory Reads observed", "Share %"], familyAlgorithmRows),
+    markdownChart("Algorithm-directory Read observed on selected heavy prompts", CHART_CAPTIONS.algorithmEntry, ["Version", ...modelLabels], chartRows((lane) => lane.algorithm_entry_pct)),
+    markdownChart("No Algorithm-directory Read observed on selected trivial prompts", CHART_CAPTIONS.algorithmSkip, ["Version", ...modelLabels], chartRows((lane) => lane.algorithm_skip_pct)),
+    markdownNarrative(sections, "cost"),
+    markdownChart("Mean CLI-reported output tokens per matched cell", CHART_CAPTIONS.tokens, ["Version", "Tokens mean", "Matched cells"], data.matched_versions.map((version) => [version.version, version.output_tokens_mean, version.cells])),
+    markdownChart("L7 minus RAW, T1–T4 outcomes succeeding in at least one trial (16 cases/model)", CHART_CAPTIONS.delta, ["Model", "Prompt-model cases", "RAW pass", "L7 pass", "Delta passes", "Delta pp"], data.raw_vs_l7.map((row) => [row.model, row.prompt_model_cases, row.raw_pass, row.l7_pass, row.delta_pass, row.delta_at_k])),
+    markdownNarrative(sections, "limits"),
+    markdownNarrative(sections, "method"),
     "### The versions under test",
     markdownTable(["Version", ...data.generated.models], matrixRows),
     "### Trials per tier",
@@ -612,24 +674,11 @@ export async function renderReportMarkdown(data: ReportData, sections: ReportSec
     "### The complete prompt set",
     markdownTable(["Tier", "Prompt id", "What the model was asked", "Checks"], data.generated.prompts.map((prompt) => [prompt.tier, prompt.id, prompt.prompt, prompt.checks.join(", ")])),
     "### What was run",
-    markdownTable(["Recorded cells", "Successful cells", "Recorded cost USD", "Recorded wall-clock hours"], [[data.run.cells_total, data.run.statuses.success ?? 0, data.run.cost_usd_total, data.run.wall_clock_total_h]]),
+    markdownTable(["Recorded cells", "Successful cells", "CLI-reported API-equivalent cost USD", "Cumulative cell-hours"], [[data.run.cells_total, data.run.statuses.success ?? 0, data.run.api_equivalent_cost_usd, data.run.cumulative_cell_hours]]),
     markdownTable(["Version", "Cells", "Statuses"], data.versions.map((version) => [version.version, version.cells, statusText(version.statuses)])),
-    markdownChart("Enforcement-layer state files written per cell, by version", CHART_CAPTIONS.hooks, ["Version", "Hook files mean"], data.versions.map((version) => [version.version, version.hook_files_mean])),
-    markdownNarrative(sections, "degraded"),
-    markdownChart("Task pass@k on T1–T4 and on T5, by version", CHART_CAPTIONS.general, ["Version", "T1–T4 (bisect models) pass@k %", "T5 personalization pass@k %"], generalRows),
-    "### Pass-rates by tier group",
-    markdownTable(["Version", "Scope", "Tiers", "Prompts", "pass@k %", "pass^k %"], tierGroupRows),
-    markdownChart("Output-format compliance, by version and model", CHART_CAPTIONS.format, ["Version", ...modelLabels], chartRows((lane) => lane.format_pct)),
-    markdownNarrative(sections, "algorithm"),
-    markdownChart("Did the version enter the Algorithm before heavy work?", CHART_CAPTIONS.algorithmEntry, ["Version", ...modelLabels], chartRows((lane) => lane.algorithm_entry_pct)),
-    markdownChart("Did it correctly STAY OUT of the Algorithm on trivial work?", CHART_CAPTIONS.algorithmSkip, ["Version", ...modelLabels], chartRows((lane) => lane.algorithm_skip_pct)),
-    markdownNarrative(sections, "versions"),
-    markdownChart("Mean output tokens generated per cell, by version", CHART_CAPTIONS.tokens, ["Version", "Tokens mean"], data.versions.map((version) => [version.version, version.output_tokens_mean])),
-    markdownNarrative(sections, "models"),
-    markdownChart("L7 minus the bare control, task pass@k", CHART_CAPTIONS.delta, ["Model", "L7 minus RAW pass@k (pp)"], data.raw_vs_l7.map((row) => [row.model, row.delta_at_k])),
-    markdownNarrative(sections, "unmeasured"),
-    markdownNarrative(sections, "conclusions"),
-    markdownNarrative(sections, "caveats"),
+    "### Hook evidence",
+    markdownTable(["Version", "Hook payload present", "Active registration present", "Runtime execution evidence", "Routing responsibility", "Algorithm-directory Read observed"], data.hook_evidence.map((entry) => [entry.version, entry.hook_payload, entry.active_registration, entry.runtime_execution, entry.routing_responsibility, entry.algorithm_directory_read])),
+    markdownNarrative(sections, "audit"),
     markdownChart("Judge score distribution", CHART_CAPTIONS.judge, ["Score", "Verdicts"], Object.entries(data.judge.score_histogram).map(([score, count]) => [score, count])),
     ...(defects ? ["### Recorded defects", markdownTable(defects.fields, defects.rows)] : []),
     markdownNarrative(sections, "appendix"),

@@ -9,11 +9,11 @@ async function main() {
     "# Benchmark Report", "",
     `Golden set ${golden.version} · matrix: ${config.versions.map((version) => version.id).join(" / ")}`, "",
     "## Version × model", "",
-    "| Version | Model | Algorithm entered | Algorithm skipped | Mode markers | Format | Task pass@k | Task pass^k | Mean tokens | Mean wall-clock |",
+    "| Version | Model | Algorithm-directory Read observed (heavy) | No Algorithm-directory Read observed (selected trivial) | Mode markers | Configured format marker found on selected checked prompts | Succeeded in at least one trial | Succeeded in every trial | Mean CLI-reported tokens | Mean wall-clock |",
     "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
   ];
 
-  const metricsFor = (version: string, model: string, tier?: string) =>
+  const metricsFor = (version: string, model: string, tier?: string | string[]) =>
     laneMetrics({ rows, golden, config, version, model, tier, resultsRoot });
 
   for (const version of config.versions) {
@@ -28,10 +28,11 @@ async function main() {
   }
 
   lines.push("", "## Per-tier breakdown", "",
-    "| Version | Model | Tier | Algorithm entered | Algorithm skipped | Mode markers | Format | Task pass@k | Task pass^k |", "|---|---|---|---:|---:|---:|---:|---:|---:|");
+    "| Version | Model | Tier | Algorithm-directory Read observed (heavy) | No Algorithm-directory Read observed (selected trivial) | Mode markers | Configured format marker found | Succeeded in at least one trial | Succeeded in every trial |", "|---|---|---|---:|---:|---:|---:|---:|---:|");
   for (const version of config.versions) {
     for (const model of lanesFor(config, version)) {
       for (const tier of Object.keys(config.trials)) {
+        if (config.tier_models?.[tier] && !config.tier_models[tier].includes(model.id)) continue;
         const metric = await metricsFor(version.id, model.id, tier);
         lines.push(`| ${version.id} | ${model.id} | ${tier} | ${percent(metric.algorithmEntryPass, metric.algorithmEntryTotal)} | ` +
           `${percent(metric.algorithmSkipPass, metric.algorithmSkipTotal)} | ${percent(metric.routingPass, metric.routingTotal)} | ` +
@@ -41,41 +42,17 @@ async function main() {
     }
   }
 
-  // Emitted with every report, not just kept in the docs: the routing column for the
-  // hook-routed versions is not a measurement of those scaffolds, and a reader who sees only
-  // this file must not read it as one.
-  lines.push("", "## Known limitations — read before quoting any number", "",
-    "**Hook-based routing is not measurable by this method, and L7 has no classifier to measure.**",
-    "Only v6 registers a mode/Algorithm classifier (`TheRouter.hook.ts`); v7.28.3 retired modes and",
-    "ships none, so an L7 routing figure was never a measurement of routing. v7 does still register",
-    "six UserPromptSubmit hooks, but they are deterministic, make no model call, and none of them",
-    "decides whether to enter the Algorithm. v6's router",
-    "spawns a nested `claude`; Claude Code passes no auth variable to hook subprocesses and the",
-    "sandbox HOME holds no credentials by design, so the router reaches its classifier and then",
-    "fails authentication. That is a deliberate isolation invariant, not a bug to fix — so L6",
-    "`algorithm_read` measures *unrouted* model behavior and must NOT be read as a scaffold",
-    "regression. L5 is unaffected: v5 routes via prose in CLAUDE.md, which spawns nothing.",
-    "",
-    "**Single/double-trial cells are noisy.** Format compliance has been observed varying run to",
-    "run on an identical lane; headline claims need 5-trial confirmation.",
-    "",
-    "**The judge bar is permissive** (`min_score` 3 of 5, most scores 5), so task pass-rate has",
-    "weak power to separate versions.",
-    "",
-    "**Mean wall-clock is not comparable** across runs at concurrency > 1; cells contend for CPU.",
-    "Token counts, routing, format and pass-rates are unaffected.",
-    "",
-    "**Algorithm entry and Algorithm skip are separate columns.** `code:algorithm_read` asks",
-    "opposite questions on opposite prompts — enter the Algorithm for heavy work, do not enter",
-    "it for trivial work. Every version passes the skip checks, so a combined column dilutes the",
-    "entry rate toward a passing-looking number and hides the largest effect in this dataset.",
-    "",
-    "**A `skipped` grader is not a failure.** The control cannot know the synthetic persona, so",
-    "the golden set skips its T5 grounding checks; those rows are excluded from pass@k rather",
-    "than counted against the lane.");
-
   const pending = rows.filter((row) => row.status === "pending_judge");
-  lines.push("", "## Cells needing judge", "");
+  lines.push("", "## Scope and caveats", "",
+    "- `code:algorithm_read` detects any transcript `Read` whose `file_path` contains the configured Algorithm directory. It does not prove ordering, an ISA/run, or that the Algorithm was followed.",
+    "- L6 hook scripts were present, registered, and executed. Its nested classifier failed authentication; for the benchmark's short heavy prompts its explicit fail-safe selected `NATIVE`, which is routed fail-safe behavior.",
+    "- L7 registered and executed six prompt-submit hooks, but none classified or forced Algorithm entry. `AlgorithmNudge` is advisory; `PromptProcessing` performs separate inference for naming/title behavior.",
+    "- Algorithm-skip is separate because it asks the opposite question, not because it universally passes; L5 Terra is the documented 2/4 exception.",
+    "- Format is an unanchored full-message regex on selected prompts, not proof of first-line or whole-version compliance.",
+    "- Single/double-trial cells are noisy. The judge floor is 3/5, marker scrubbing is not guaranteed complete blinding, recorded judge rows lack provider/model provenance, and the frozen rubric's score-three alternate-vendor rejudge was not implemented.",
+    "- This cold-start, single-turn benchmark does not test memory, continuity, multi-turn collaboration, accumulated context, or long-term outcomes.",
+    "",
+    "## Cells needing judge", "");
   if (!pending.length) lines.push("None.");
   else for (const row of pending) lines.push(`- ${row.version}/${row.model}/${row.prompt_id}/trial-${row.trial}: ${row.grader}`);
 
