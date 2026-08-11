@@ -13,13 +13,15 @@ import {
 } from "./Aggregate.ts";
 import { ensure, exists, path } from "./Common.ts";
 
-const SECTION_IDS = ["question", "method", "run", "findings", "reading", "corrections", "limitations", "appendix"] as const;
+const SECTION_IDS = ["question", "design", "degraded", "algorithm", "versions", "models", "unmeasured", "conclusions", "caveats", "appendix"] as const;
 type SectionId = typeof SECTION_IDS[number];
 
 export type ReportSection = { id: string; title: string; bodyHtml: string };
 type Numeric = number | null;
 type DisplayMetrics = {
-  routing_pct: Numeric; routing_pass: number; routing_total: number;
+  algorithm_entry_pct: Numeric; algorithm_entry_pass: number; algorithm_entry_total: number;
+  algorithm_skip_pct: Numeric; algorithm_skip_pass: number; algorithm_skip_total: number;
+  mode_marker_pct: Numeric;
   format_pct: Numeric; format_pass: number; format_total: number;
   task_at_k_pct: Numeric; task_all_k_pct: Numeric;
   task_prompts: number; any_pass: number; all_pass: number;
@@ -32,12 +34,14 @@ export type TierRecord = LaneRecord & { tier: string };
 type VersionRecord = {
   version: string; cells: number; output_tokens_mean: Numeric; cost_usd_total: number;
   wall_clock_mean_s: Numeric; hook_files_mean: Numeric; statuses: Record<string, number>;
-  task_at_k_pct: Numeric; format_pct: Numeric; routing_pct: Numeric;
+  task_at_k_pct: Numeric; format_pct: Numeric; algorithm_entry_pct: Numeric;
 };
 export type ReportData = {
-  generated: { golden_set: string; grade_rows: number; versions: string[]; models: string[]; trials: Record<string, number>; tier_models: Record<string, string[]> };
+  generated: { golden_set: string; grade_rows: number; versions: string[]; models: string[]; trials: Record<string, number>; tier_models: Record<string, string[]>;
+    prompts: Array<{ id: string; tier: string; prompt: string; checks: string[] }> };
   lanes: LaneRecord[]; tiers: TierRecord[]; versions: VersionRecord[];
   raw_vs_l7: Array<{ model: string; raw_at_k: Numeric; l7_at_k: Numeric; delta_at_k: Numeric; raw_all_k: Numeric; l7_all_k: Numeric; delta_all_k: Numeric }>;
+  tier_groups: Array<{ version: string; scope: string; group: string; prompts: number; at_k: Numeric; all_k: Numeric }>;
   judge: { rows: number; pass: number; fail: number; errors: number; score_histogram: Record<string, number>; by_version: Record<string, { rows: number; pass: number; fail: number; errors: number }> };
   run: { cells_total: number; statuses: Record<string, number>; wall_clock_total_h: number; cost_usd_total: number; pending_judge: number };
 };
@@ -60,7 +64,11 @@ function sumStatuses(records: Array<{ statuses: Record<string, number> }>): Reco
 }
 function metricRecord(metrics: LaneMetrics): DisplayMetrics {
   return {
-    routing_pct: roundedPercent(metrics.routingPass, metrics.routingTotal), routing_pass: metrics.routingPass, routing_total: metrics.routingTotal,
+    algorithm_entry_pct: roundedPercent(metrics.algorithmEntryPass, metrics.algorithmEntryTotal),
+    algorithm_entry_pass: metrics.algorithmEntryPass, algorithm_entry_total: metrics.algorithmEntryTotal,
+    algorithm_skip_pct: roundedPercent(metrics.algorithmSkipPass, metrics.algorithmSkipTotal),
+    algorithm_skip_pass: metrics.algorithmSkipPass, algorithm_skip_total: metrics.algorithmSkipTotal,
+    mode_marker_pct: roundedPercent(metrics.routingPass, metrics.routingTotal),
     format_pct: roundedPercent(metrics.formatPass, metrics.formatTotal), format_pass: metrics.formatPass, format_total: metrics.formatTotal,
     task_at_k_pct: roundedPercent(metrics.anyPass, metrics.taskPrompts), task_all_k_pct: roundedPercent(metrics.allPass, metrics.taskPrompts),
     task_prompts: metrics.taskPrompts, any_pass: metrics.anyPass, all_pass: metrics.allPass,
@@ -77,8 +85,8 @@ function rollupVersion(version: string, lanes: LaneRecord[], source: LaneMetrics
   const costTotal = source.reduce((total, metric) => total + metric.costUsd, 0);
   const hookTotal = source.reduce((total, metric) => total + metric.hookFilesWritten, 0);
   const hookCells = source.reduce((total, metric) => total + metric.hookCells, 0);
-  const routingPass = source.reduce((total, metric) => total + metric.routingPass, 0);
-  const routingTotal = source.reduce((total, metric) => total + metric.routingTotal, 0);
+  const entryPass = source.reduce((total, metric) => total + metric.algorithmEntryPass, 0);
+  const entryTotal = source.reduce((total, metric) => total + metric.algorithmEntryTotal, 0);
   const formatPass = source.reduce((total, metric) => total + metric.formatPass, 0);
   const formatTotal = source.reduce((total, metric) => total + metric.formatTotal, 0);
   const anyPass = source.reduce((total, metric) => total + metric.anyPass, 0);
@@ -87,7 +95,7 @@ function rollupVersion(version: string, lanes: LaneRecord[], source: LaneMetrics
     version, cells, output_tokens_mean: mean(tokenTotal, cells, 1), cost_usd_total: rounded(costTotal, 2),
     wall_clock_mean_s: mean(wallTotal / 1000, cells, 2), hook_files_mean: mean(hookTotal, hookCells, 1),
     statuses: sumStatuses(lanes), task_at_k_pct: roundedPercent(anyPass, taskPrompts),
-    format_pct: roundedPercent(formatPass, formatTotal), routing_pct: roundedPercent(routingPass, routingTotal),
+    format_pct: roundedPercent(formatPass, formatTotal), algorithm_entry_pct: roundedPercent(entryPass, entryTotal),
   };
 }
 
@@ -154,13 +162,43 @@ export async function buildReportData(): Promise<ReportData> {
       delta_at_k: difference(raw.task_at_k_pct, l7.task_at_k_pct), raw_all_k: raw.task_all_k_pct,
       l7_all_k: l7.task_all_k_pct, delta_all_k: difference(raw.task_all_k_pct, l7.task_all_k_pct) }] : [];
   });
+  // Every lane ran T1-T4; only the two bisect models ran T5. Rolling those together would
+  // compare a version measured on 21 prompts against one measured on 16, so the two scopes are
+  // reported separately and never summed.
+  const bisectModels = config.tier_models?.T5 ?? config.models.map((model) => model.id);
+  const tier_groups = config.versions.flatMap((version) => {
+    const groups: Array<{ label: string; tiers: string[]; models: string[]; scope: string }> = [
+      { label: "T1-T4", tiers: ["T1", "T2", "T3", "T4"], models: bisectModels, scope: "bisect models" },
+      { label: "T5", tiers: ["T5"], models: bisectModels, scope: "bisect models" },
+      { label: "T1-T4", tiers: ["T1", "T2", "T3", "T4"], models: config.models.map((model) => model.id).filter((model) => !bisectModels.includes(model)), scope: "model sweep" },
+    ];
+    return groups.flatMap((group) => {
+      const rows = tiers.filter((tier) => tier.version === version.id && group.tiers.includes(tier.tier) && group.models.includes(tier.model));
+      const prompts = rows.reduce((total, tier) => total + tier.task_prompts, 0);
+      if (!prompts) return [];
+      const any = rows.reduce((total, tier) => total + tier.any_pass, 0);
+      const all = rows.reduce((total, tier) => total + tier.all_pass, 0);
+      return [{ version: version.id, scope: group.scope, group: group.label, prompts, at_k: roundedPercent(any, prompts), all_k: roundedPercent(all, prompts) }];
+    });
+  });
+
   const allSources = [...laneSources.values()];
   const allCells = allSources.reduce((total, metric) => total + metric.cells, 0);
   const allWall = allSources.reduce((total, metric) => total + metric.wallClockMs, 0);
   const allCost = allSources.reduce((total, metric) => total + metric.costUsd, 0);
   return {
-    generated: { golden_set: golden.version, grade_rows: rows.length, versions: config.versions.map((version) => version.id), models: config.models.map((model) => model.id), trials: config.trials, tier_models: config.tier_models ?? {} },
-    lanes, tiers, versions, raw_vs_l7,
+    generated: {
+      golden_set: golden.version, grade_rows: rows.length,
+      versions: config.versions.map((version) => version.id), models: config.models.map((model) => model.id),
+      trials: config.trials, tier_models: config.tier_models ?? {},
+      // The prompts themselves are part of the method, not an appendix curiosity: a reader
+      // cannot judge whether a tier measures what it claims without seeing what was asked.
+      prompts: golden.prompts.map((prompt) => ({
+        id: prompt.id, tier: prompt.tier, prompt: prompt.prompt ?? "",
+        checks: prompt.expectations.map((expectation) => expectation.name ?? expectation.grader),
+      })),
+    },
+    lanes, tiers, versions, raw_vs_l7, tier_groups,
     judge: await judgeSummary(resultsRoot, config.versions.map((version) => version.id)),
     run: { cells_total: allCells, statuses: sumStatuses(lanes), wall_clock_total_h: rounded(allWall / 3_600_000, 2), cost_usd_total: rounded(allCost, 2), pending_judge: rows.filter((row) => row.status === "pending_judge").length },
   };
@@ -351,10 +389,17 @@ function narrative(sections: ReportSection[], id: SectionId): string {
   const section = sections.find((candidate) => candidate.id === id);
   return `<div class="narrative"><h2>${escapeHtml(section?.title ?? id)}</h2>${section?.bodyHtml ?? "<p>TODO</p>"}</div>`;
 }
+/** A chart with no caption is a chart nobody reads the same way twice. */
+function figure(svg: string, caption: string): string {
+  return `<figure>${svg}<figcaption>${renderInline(caption)}</figcaption></figure>`;
+}
 function statusText(statuses: Record<string, number>): string { return Object.entries(statuses).map(([status, count]) => `${status}: ${count}`).join(", ") || "—"; }
 function glossary(data: ReportData): string {
   const descriptions: Record<string, string> = {
-    routing_pct: "Share of applicable routing checks that passed.", format_pct: "Share of applicable output-format checks that passed.",
+    algorithm_entry_pct: "Share of HEAVY prompts where the version read its Algorithm before starting work. Three prompts, two trials each.",
+    algorithm_skip_pct: "Share of TRIVIAL prompts where it correctly did NOT read the Algorithm. Every version passes these, which is why they are a separate column.",
+    mode_marker_pct: "Share of responses carrying the version's own documented mode banner. Null for versions that ship no modes.",
+    format_pct: "Share of applicable output-format checks that passed.",
     task_prompts: "Prompts this lane was scheduled to run — restricted tiers are absent from the lanes that never ran them, so this is the pass-rate denominator.",
     task_at_k_pct: "Share of scheduled task prompts with at least one passing trial.", task_all_k_pct: "Share of scheduled task prompts whose trials all passed.",
     output_tokens_mean: "Mean generated output tokens per recorded cell.", wall_clock_mean_s: "Mean recorded wall-clock seconds per cell.",
@@ -381,18 +426,49 @@ export async function renderReportPage(data: ReportData, sections: ReportSection
   const runTiles = `<div class="tiles"><div><b>${data.run.cells_total}</b><span>recorded cells</span></div><div><b>${data.run.statuses.success ?? 0}</b><span>successful cells</span></div><div><b>$${data.run.cost_usd_total}</b><span>recorded cost</span></div><div><b>${data.run.wall_clock_total_h} h</b><span>recorded wall-clock</span></div></div>`;
   const versionRuns = table(["Version", "Cells", "Statuses"], data.versions.map((version) => [version.version, version.cells, statusText(version.statuses)]));
   const modelLabels = data.generated.models.filter((model) => data.lanes.some((lane) => lane.model === model));
-  const grouped = groupedBarChart("Task pass@k by version and model", modelLabels, data.generated.versions.map((version) => ({ label: version, values: modelLabels.map((model) => data.lanes.find((lane) => lane.version === version && lane.model === model)?.task_at_k_pct ?? null) })));
-  const deltas = divergingBarChart("L7 minus RAW task pass@k", data.raw_vs_l7.map((row) => ({ label: row.model, value: row.delta_at_k })));
-  // Grouped by model rather than one bar per lane: twenty labels on a single axis shrink to
-  // an unreadable smear once the SVG is scaled to the page width.
-  const format = groupedBarChart("Format compliance by version and model", modelLabels, data.generated.versions.map((version) => ({ label: version, values: modelLabels.map((model) => data.lanes.find((lane) => lane.version === version && lane.model === model)?.format_pct ?? null) })));
-  const routing = groupedBarChart("Algorithm read before substantial work, by version and model", modelLabels, data.generated.versions.map((version) => ({ label: version, values: modelLabels.map((model) => data.lanes.find((lane) => lane.version === version && lane.model === model)?.routing_pct ?? null) })));
-  const tokens = simpleBarChart("Mean output tokens per cell, by version", data.versions.map((version) => ({ label: version.version, value: version.output_tokens_mean })));
-  const hooks = simpleBarChart("Mean hook-state files written per cell, by version", data.versions.map((version) => ({ label: version.version, value: version.hook_files_mean })));
-  const judgeScores = simpleBarChart("Judge score distribution (1–5)", Object.entries(data.judge.score_histogram).map(([score, count]) => ({ label: score, value: count })));
-  const laneHeaders = ["Version", "Model", "Prompts", "Routing %", "Format %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD", "Hook files mean", "Statuses"];
-  const laneTable = table(laneHeaders, data.lanes.map((lane) => [lane.version, lane.model, lane.task_prompts, lane.routing_pct, lane.format_pct, lane.task_at_k_pct, lane.task_all_k_pct, lane.cells, lane.output_tokens_mean, lane.wall_clock_mean_s, lane.cost_usd_total, lane.hook_files_mean, statusText(lane.statuses)]));
-  const tierTable = table(["Version", "Model", "Tier", "Prompts", "Routing %", "Format %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD", "Hook files mean", "Statuses"], data.tiers.map((tier) => [tier.version, tier.model, tier.tier, tier.task_prompts, tier.routing_pct, tier.format_pct, tier.task_at_k_pct, tier.task_all_k_pct, tier.cells, tier.output_tokens_mean, tier.wall_clock_mean_s, tier.cost_usd_total, tier.hook_files_mean, statusText(tier.statuses)]));
+  const laneFor = (version: string, model: string) => data.lanes.find((lane) => lane.version === version && lane.model === model);
+  const byVersion = (pick: (lane: LaneRecord) => Numeric) =>
+    data.generated.versions.map((version) => ({ label: version, values: modelLabels.map((model) => { const lane = laneFor(version, model); return lane ? pick(lane) : null; }) }));
+
+  const groupRow = (version: string, scope: string, group: string) =>
+    data.tier_groups.find((entry) => entry.version === version && entry.scope === scope && entry.group === group);
+  const tierGroupTable = table(
+    ["Version", "Scope", "Tiers", "Prompts", "pass@k %", "pass^k %"],
+    data.tier_groups.map((entry) => [entry.version, entry.scope, entry.group, entry.prompts, entry.at_k, entry.all_k]));
+  const generalChart = figure(
+    groupedBarChart("Task pass@k on T1–T4 and on T5, by version", ["T1–T4 (bisect models)", "T5 personalization"],
+      data.generated.versions.map((version) => ({ label: version,
+        values: [groupRow(version, "bisect models", "T1-T4")?.at_k ?? null, groupRow(version, "bisect models", "T5")?.at_k ?? null] }))),
+    "Left group: the four general tiers. Right group: personalization. The control (RAW) leads on general work and collapses on personalization; every LifeOS version does the reverse.");
+
+  const algorithmChart = figure(
+    groupedBarChart("Did the version enter the Algorithm before heavy work?", modelLabels, byVersion((lane) => lane.algorithm_entry_pct)),
+    "Three heavy prompts × two trials = six checks per lane. RAW has no Algorithm, so it has no bar. **L5 enters reliably; L6 and L7 never do on a Claude model, and always do on a GPT model.**");
+  const algorithmSkipChart = figure(
+    groupedBarChart("Did it correctly STAY OUT of the Algorithm on trivial work?", modelLabels, byVersion((lane) => lane.algorithm_skip_pct)),
+    "The same grader asking the opposite question on four trivial prompts. Near-perfect everywhere — which is exactly why averaging it with the chart above hides the result.");
+
+  const tokenChart = figure(
+    simpleBarChart("Mean output tokens generated per cell, by version", data.versions.map((version) => ({ label: version.version, value: version.output_tokens_mean }))),
+    "What each version costs in generated tokens for the same 21 prompts. L5 spends 4–5× what L6, L7 or the bare control spend.");
+  const formatChart = figure(
+    groupedBarChart("Output-format compliance, by version and model", modelLabels, byVersion((lane) => lane.format_pct)),
+    "Whether each response opened with the version's own documented format contract. The control has none to honour, so it has no bar.");
+
+  const deltaChart = figure(
+    divergingBarChart("L7 minus the bare control, task pass@k", data.raw_vs_l7.map((row) => ({ label: row.model, value: row.delta_at_k }))),
+    "Positive means LifeOS 7 beat the bare control on that model. One prompt is worth 4.8–6.3 points here, so only sonnet-5 and gpt-5.6-sol sit outside the noise band.");
+
+  const hookChart = figure(
+    simpleBarChart("Enforcement-layer state files written per cell, by version", data.versions.map((version) => ({ label: version.version, value: version.hook_files_mean }))),
+    "Evidence that the hook layer actually ran, recorded per cell. The control registers no hooks and writes nothing; every LifeOS version writes 22–25 files per cell.");
+  const judgeChart = figure(
+    simpleBarChart("Judge scores, all 220 rubric verdicts", Object.entries(data.judge.score_histogram).map(([score, count]) => ({ label: score, value: count }))),
+    "Scores are bimodal, and the pass bar is 3 of 5 — so all 35 threes count as passes. Raising the bar to 4 would reclassify 16% of verdicts.");
+
+  const laneHeaders = ["Version", "Model", "Prompts", "Algorithm entered %", "Algorithm skipped %", "Mode markers %", "Format %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD", "Hook files mean", "Statuses"];
+  const laneTable = table(laneHeaders, data.lanes.map((lane) => [lane.version, lane.model, lane.task_prompts, lane.algorithm_entry_pct, lane.algorithm_skip_pct, lane.mode_marker_pct, lane.format_pct, lane.task_at_k_pct, lane.task_all_k_pct, lane.cells, lane.output_tokens_mean, lane.wall_clock_mean_s, lane.cost_usd_total, lane.hook_files_mean, statusText(lane.statuses)]));
+  const tierTable = table(["Version", "Model", "Tier", "Prompts", "Algorithm entered %", "Algorithm skipped %", "Mode markers %", "Format %", "Task @k %", "Task all-k %", "Cells", "Tokens mean", "Wall s mean", "Cost USD"], data.tiers.map((tier) => [tier.version, tier.model, tier.tier, tier.task_prompts, tier.algorithm_entry_pct, tier.algorithm_skip_pct, tier.mode_marker_pct, tier.format_pct, tier.task_at_k_pct, tier.task_all_k_pct, tier.cells, tier.output_tokens_mean, tier.wall_clock_mean_s, tier.cost_usd_total]));
   const defects = await defectTable();
   // Three theme states, not two. An explicit viewer choice stamps data-theme on the root; the
   // default "system" setting stamps nothing, so only prefers-color-scheme separates the two
@@ -443,15 +519,19 @@ blockquote { border-left:.2rem solid var(--accent); margin-left:0; padding-left:
 footer { color:var(--muted); padding:1rem 0 3rem; font-size:.82rem; }
 @media (max-width:38rem) { main { width:min(100% - 1rem,78rem); } section { border-radius:.4rem; } }
 </style>`;
-  const body = `<main><header><h1>Does the scaffolding actually help?</h1><p>An A/B benchmark of three released framework versions against a bare control · frozen golden set ${escapeHtml(data.generated.golden_set)} · aggregate results only</p></header>
+  const promptTable = table(["Tier", "Prompt id", "What the model was asked", "Checks"],
+    data.generated.prompts.map((prompt) => [prompt.tier, prompt.id, prompt.prompt, prompt.checks.join(", ")]), true);
+  const body = `<main><header><h1>Does LifeOS actually help?</h1><p>Three released versions of LifeOS measured against a bare control, across eight models, on a frozen set of 21 prompts · golden set ${escapeHtml(data.generated.golden_set)} · aggregate results only</p></header>
 <section id="question">${narrative(sections, "question")}</section>
-<section id="method">${narrative(sections, "method")}<h3>Configured lane matrix</h3>${matrix}<h3>Trials by tier</h3>${trials}</section>
-<section id="run">${narrative(sections, "run")}${runTiles}<h3>Recorded cells by version</h3>${versionRuns}</section>
-<section id="findings">${narrative(sections, "findings")}${grouped}${deltas}${format}${routing}${tokens}${hooks}${judgeScores}</section>
-<section id="reading">${narrative(sections, "reading")}<h3>Metric glossary</h3>${glossary(data)}</section>
-${defects ? `<section id="corrections">${narrative(sections, "corrections")}${defects}</section>` : `<section id="corrections">${narrative(sections, "corrections")}</section>`}
-<section id="limitations">${narrative(sections, "limitations")}</section>
-<section id="appendix">${narrative(sections, "appendix")}<h3>All lanes</h3>${laneTable}<h3>All scheduled tiers</h3>${tierTable}</section>
+<section id="design">${narrative(sections, "design")}<h3>The versions under test</h3>${matrix}<h3>Trials per tier</h3>${trials}<h3>The complete prompt set</h3>${promptTable}<h3>What was run</h3>${runTiles}${versionRuns}${hookChart}</section>
+<section id="degraded">${narrative(sections, "degraded")}${generalChart}<h3>Pass-rates by tier group</h3>${tierGroupTable}${formatChart}</section>
+<section id="algorithm">${narrative(sections, "algorithm")}${algorithmChart}${algorithmSkipChart}</section>
+<section id="versions">${narrative(sections, "versions")}${tokenChart}</section>
+<section id="models">${narrative(sections, "models")}${deltaChart}</section>
+<section id="unmeasured">${narrative(sections, "unmeasured")}</section>
+<section id="conclusions">${narrative(sections, "conclusions")}</section>
+<section id="caveats">${narrative(sections, "caveats")}${judgeChart}${defects}</section>
+<section id="appendix">${narrative(sections, "appendix")}<h3>Metric glossary</h3>${glossary(data)}<h3>Every lane</h3>${laneTable}<h3>Every lane by tier</h3>${tierTable}</section>
 <footer>Every figure is regenerated from the recorded per-cell artifacts by one shared aggregation module. No individual transcripts or workspaces are included.</footer></main>`;
   const title = "lifeos-bench — does the scaffolding actually help?";
   const standalone = `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>${style}</head><body>${body}</body></html>\n`;

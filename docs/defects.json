@@ -29,7 +29,7 @@
     {
       "id": 6,
       "defect": "workspace_diff_count counted hook state",
-      "effect": "Penalised only versions WITH hooks — silently favoured the control"
+      "effect": "Penalised only versions WITH hooks \u2014 silently favoured the control"
     },
     {
       "id": 7,
@@ -69,7 +69,7 @@
     {
       "id": 14,
       "defect": "Staged install SHARED by every cell in a lane",
-      "effect": "Hooks wrote context-bearing state into the tree the next cell loads — cross-cell coupling, and a race at concurrency > 1"
+      "effect": "Hooks wrote context-bearing state into the tree the next cell loads \u2014 cross-cell coupling, and a race at concurrency > 1"
     },
     {
       "id": 15,
@@ -79,7 +79,7 @@
     {
       "id": 16,
       "defect": "A skipped grader counted as a task failure",
-      "effect": "The golden set skips checks that cannot apply to a version — the control structurally cannot know the persona — so a documented exemption became a failure. Penalised only the control"
+      "effect": "The golden set skips checks that cannot apply to a version \u2014 the control structurally cannot know the persona \u2014 so a documented exemption became a failure. Penalised only the control"
     },
     {
       "id": 17,
@@ -89,7 +89,12 @@
     {
       "id": 18,
       "defect": "Retired-lane artifacts left inside the scanned results tree",
-      "effect": "The retired private-fork lane's cells still sat in results/, and they legitimately contain real identity, so a full containment scan reported 101 violating files with zero in any live cell — a gate whose exit code no longer distinguished a sandbox escape from a retired lane's own content. Fixed by quarantining those trees, NOT by exempting them from the scanner"
+      "effect": "The retired private-fork lane's cells still sat in results/, and they legitimately contain real identity, so a full containment scan reported 101 violating files with zero in any live cell \u2014 a gate whose exit code no longer distinguished a sandbox escape from a retired lane's own content. Fixed by quarantining those trees, NOT by exempting them from the scanner"
+    },
+    {
+      "id": 19,
+      "defect": "Algorithm entry averaged with Algorithm skip",
+      "effect": "code:algorithm_read asks opposite questions on opposite prompts \u2014 enter the Algorithm for heavy work, stay out of it for trivial work. Every version passes the skip checks, so a single combined column dragged a 0-of-6 entry rate up to a passing-looking 40% and hid the largest effect in the dataset. Split into separate columns keyed on the golden set's own expect field"
     }
   ]
 }

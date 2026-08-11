@@ -41,7 +41,7 @@ describe("report prose helpers", () => {
     const directory = await mkdtemp(join(tmpdir(), "lifeos-bench-report-"));
     temporaryDirectories.push(directory);
     const sections = await loadSections(join(directory, "nested", "report-sections.md"));
-    expect(sections.map((section) => section.id)).toEqual(["question", "method", "run", "findings", "reading", "corrections", "limitations", "appendix"]);
+    expect(sections.map((section) => section.id)).toEqual(["question", "design", "degraded", "algorithm", "versions", "models", "unmeasured", "conclusions", "caveats", "appendix"]);
     expect(sections.every((section) => section.bodyHtml === "<p>TODO</p>")).toBe(true);
   });
 });

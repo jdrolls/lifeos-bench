@@ -182,8 +182,15 @@ was added to `LeakCheck`**, because an exemption is exactly how a gate stops mea
 Numbers: `results/phase1/REPORT.md`, `docs/report-data.json`, `docs/report.html`. **Everything in
 the Phase 4 section below is superseded** and retained only as the history of how it was wrong.
 
-Two grader defects were found while regenerating, both one-directional, both now fixed with
+Three grader defects were found while regenerating, all one-directional, all now fixed with
 regression tests and listed in `README.md` → Grader integrity:
+
+- **Algorithm entry was averaged with Algorithm skip.** `code:algorithm_read` asks opposite
+  questions on opposite prompts — enter the Algorithm for heavy work, stay out of it for trivial
+  work. Every version passes the skip checks, so the combined column dragged a 0-of-6 entry rate up
+  to a passing-looking 40% and hid the largest effect in the dataset. Now split on the golden set's
+  own `expect` field: **L5 enters on 5–6 of 6 heavy prompts; L6 0 of 6 (hook confounded); L7 0 of 6
+  on every Claude model and 6 of 6 on every GPT model.**
 
 - **A `skipped` grader counted as a task failure.** The golden set skips checks that cannot apply
   to a version — RAW's T5 grounding — so a documented exemption became a penalty, and only the

@@ -1,290 +1,272 @@
-<!--section: id=question title=The question-->
-AI "scaffolding" frameworks — layered system prompts, always-on context files, hooks that gate
-and reroute the model — are argued about far more than they are measured. The argument that
-started this one is [LifeOS discussion #1715](https://github.com/danielmiessler/LifeOS/discussions/1715):
-does the framework actually improve outcomes, on which models, at what token cost?
+<!--section: id=question title=The question LifeOS #1715 asked-->
+LifeOS is not a prompt. It is a Life Operating System: a constitutional system prompt, a `CLAUDE.md`
+that routes behaviour, `@`-imported identity, TELOS and project context, **the Algorithm** — the
+procedure the assistant is supposed to enter for any substantial work — plus hooks that enforce,
+skills that specialise, and a memory system meant to compound across sessions.
 
-That question cannot be settled by reading the framework. It needs an experiment with a control.
+[LifeOS discussion #1715](https://github.com/danielmiessler/LifeOS/discussions/1715) asked the
+question every user of a framework like this eventually asks out loud:
 
-This is that experiment. Three released versions of one real framework, plus a bare control that
-has none of it, run across eight models on a frozen set of prompts, graded by code where the
-answer is checkable and by blinded cross-vendor judges where it is not.
+> Does the scaffolding actually improve outcomes — on which models, at what token cost? And has
+> LifeOS got *better* across its releases, or worse?
 
-Two things are being asked, and they are not the same question:
+That cannot be settled by reading the framework, and it cannot be settled by anecdote. It needs a
+control: the same models, the same prompts, the same harness, with and without LifeOS.
 
-- **Does the scaffolding help?** Compare each scaffolded lane against the bare control on the
-  same model, same prompt, same harness.
-- **Where does it stop helping?** Compare across model tiers and across framework versions. A
-  scaffold that lifts a mid-tier model and does nothing for a frontier one is a different claim
-  from a scaffold that lifts everything.
+This is that experiment. Three released versions of LifeOS, a bare control with none of it, eight
+models, 21 frozen prompts, deterministic graders where the answer is checkable and blinded
+cross-vendor judges where it is not.
 
-<!--section: id=method title=How it was measured-->
-Every cell is one `(version, model, prompt, trial)`. Nothing is compared across harnesses: the
-GPT lanes run through the *same* Claude Code harness via a local ChatGPT-auth proxy, so the hooks
-fire identically and the only difference is the model.
+Four questions, answered in order: **has LifeOS degraded?** · **does the Algorithm still fire, and
+does that depend on the model?** · **was an earlier version better?** · **what does this say about
+models versus frameworks generally?** Then the part no benchmark of this shape can measure — and
+what to do about all of it.
 
-### The scaffolds
+<!--section: id=design title=Exactly what was tested-->
+### The four configurations
 
-`RAW` is the control — bare Claude Code with an empty config: no framework file, no imports, no
-hooks. `L5`, `L6` and `L7` are three released versions of the framework, staged from their own
-upstream checkouts and activated by their own installers, not by a reimplementation.
+| Lane | What it actually is | How it gets into the Algorithm |
+|---|---|---|
+| **RAW** | Bare Claude Code, empty config directory. No `CLAUDE.md`, no imports, no hooks, no Algorithm. The control. | n/a — there is no Algorithm to enter |
+| **L5** | **PAI v5.0.0** — the last release under the PAI name. Ships a complete `.claude` tree with identity imports already active and the mode templates written inline in `CLAUDE.md`. | **Prose.** `CLAUDE.md` tells the model, in words, to read the Algorithm before substantial work. Nothing is spawned. |
+| **L6** | **LifeOS v6.0.5** — three modes (ALGORITHM / NATIVE / MINIMAL), defined only in `LIFEOS_SYSTEM_PROMPT.md`. | **A classifier hook.** `TheRouter.hook.ts` calls a model on every prompt to choose the mode. |
+| **L7** | **LifeOS v7.28.3** — modes retired outright on 2026-07-11: *"One format, every response — there are no modes."* No classifier hook ships at all. | **Prose in the system prompt**, with no router behind it. |
 
-### The prompts
+Each version is staged from its own upstream tag and installed by **its own installer** rather than
+a reimplementation, then given the same synthetic user profile. The GPT lanes run through the
+*same* Claude Code harness via a local ChatGPT-auth proxy, so hooks fire identically and the only
+difference is the model.
 
-Twenty-one prompts, frozen as golden set 2.0.0, in five tiers:
+### The five tiers, and why each exists
 
-| Tier | What it probes |
-|---|---|
-| T1 | simple assistant tasks — a fact, a one-line edit, an acknowledgement |
-| T2 | medium coding — a bug fix with a failing test, a script, a data question |
-| T3 | complex work — build, debug across modules, refactor, plan |
-| T4 | routing traps — casual phrasing hiding real scope, formal phrasing hiding triviality |
-| T5 | personalization — does the answer use the user's actual profile, or invent one |
+Twenty-one prompts, frozen as golden set 2.0.0. Each tier probes a different claim LifeOS makes
+about itself:
 
-The persona used in T5 is synthetic and disjoint from the operator by construction, which turns
-the operator's own identifiers into a continuous tripwire: if any of them appear in a transcript,
-a cell escaped its sandbox and the containment gate invalidates it.
+| Tier | What it probes | Why it is here |
+|---|---|---|
+| **T1** | Trivial requests — a fact, a one-line edit, an acknowledgement | A Life OS must **get out of the way**. If a framework makes "thanks, that's all for now" expensive, that is cost with no benefit. |
+| **T2** | Ordinary coding and analysis — a failing test, a script, a CSV question | The bread-and-butter work, and the effect users would feel daily. |
+| **T3** | Heavy engineering — build a CLI with tests, debug across three modules, refactor without changing behaviour, produce a plan | **Where the Algorithm is supposed to fire.** If it ever earns its cost, it earns it here. |
+| **T4** | Traps where phrasing and scope disagree — *"build me a quick stats page, nothing fancy"* (casual words, real work) and *"perform a comprehensive analysis to determine which is larger: 7 or 12"* (formal words, trivial work) | Routing claims live or die here. A framework that routes on tone rather than scope fails one of these two. |
+| **T5** | Personalization — *"what should I focus on today?"*, *"does this consulting gig fit my goals?"* | The thing only a Life OS can do. The control structurally **cannot** know the user, so its checks here are skipped rather than failed. |
 
-### Three columns, never averaged together
+T3 and T4 carry the Algorithm-**entry** checks. T1 and T4's trivial prompt carry the opposite
+check — the Algorithm must **not** be entered. Those are reported as separate columns throughout,
+never averaged: every version passes the second kind, so combining them hides the first.
 
-Grading keeps **routing**, **format compliance** and **task success** in separate columns.
-Collapsing the first two produced a headline that had to be retracted: one version deliberately
-removed its output modes, and a metric that grepped for mode banners scored it zero for a
-feature it had deleted on purpose.
+The complete prompt set and the checks applied to each are below. Nothing was added or reworded
+after the runs began.
 
-- **Routing** asks a behavioural question — did the scaffold read its own Algorithm before
-  substantial work — so it means the same thing across versions that disagree about whether
-  modes exist at all.
-- **Format compliance** checks each version's own documented output contract.
-- **Task success** is everything checkable: tests pass, exact outputs, files changed or left
-  alone, tool-call and token budgets.
+### How it was graded
 
-Where an answer is not mechanically checkable, an LLM judge scores it against a rubric.
-**Judges are blinded and cross-vendor**: banner lines are stripped before the judge sees the
-response, Claude-family cells are judged by GPT, GPT cells by Claude. Nothing self-grades. The
-Claude-side judge runs with an empty config *and* a neutral working directory — both load-bearing,
-because Claude Code derives context from the working directory as well as from `HOME`, and an
-unisolated judge grades synthetic-persona answers against the operator's real profile.
+- **Code graders** where the answer is checkable: tests pass, exact outputs, files changed or left
+  alone, tool-call and token budgets, and whether the Algorithm file was read before substantial
+  work began.
+- **Blinded cross-vendor judges** where it is not: banner lines are stripped before the judge sees
+  the response, Claude-family cells are judged by GPT and GPT cells by Claude. Nothing self-grades.
+  For personalization the judge is handed the synthetic profile as ground truth, so it can tell a
+  correct citation from an invented one.
+- **Isolation**: every cell gets its own `$HOME` cloned from a staged template, a `sandbox-exec`
+  profile denying the operator's real home, and a containment scan that invalidates any cell that
+  escapes. Each cell also records what its hooks wrote, so *"was the enforcement layer actually
+  running"* is a number in the dataset rather than a claim in a README.
 
-### Isolation, and what "hooks on" means
+<!--section: id=degraded title=Has LifeOS degraded?-->
+**On general work: slightly, and consistently in one direction. On personalization: no — every
+version is transformative. On Algorithm engagement: yes, and severely.**
 
-Each cell gets its own `$HOME`, cloned from a staged template that the seatbelt grants no write
-access, so one cell's hooks cannot carry state into the next. A `sandbox-exec` profile denies the
-operator's home outright. Cells run with their working directory outside that tree — not tidiness:
-a Bun process whose cwd sits inside the denied subtree starts with a completely empty environment,
-and every framework hook is a Bun script, so the entire enforcement layer was silently dead until
-this was found.
-
-Because that failure was invisible in the artifacts, every cell now **records what its hooks
-wrote**: the list of paths touched inside its private `$HOME` (`home-writes.txt`), the files
-themselves (`home-state/`), and a count in `meta.json`. "The enforcement layer ran" is now a
-number in the dataset rather than a claim in a README.
-
-<!--section: id=run title=What was actually run-->
-560 cells. 559 succeeded. The single failure is a reproducible 20-minute timeout on one control
-cell — it failed twice, the second time on an otherwise idle machine — and it is recorded as a
-timeout rather than rescued by raising the ceiling mid-analysis.
-
-Every scaffolded cell in this dataset ran with a working hook layer, and the evidence is in the
-data rather than in this sentence: the enforcement layer wrote a mean of 22 to 25 state files per
-cell, and the control wrote none, because it registers no hooks. The control's cells are retained
-from the previous run on a stated argument rather than re-executed — a version with no hooks has
-nothing writing to `$HOME` at runtime, and every cell already had a unique working directory, so
-no session could be resumed into another cell.
-
-Judging is complete: 220 rubric verdicts, zero judge errors, zero rows left unjudged.
-
-**Read the lane tables with their `Prompts` column.** The personalization tier runs on two models
-by design, so six of the eight model lanes were scheduled for 16 prompts and two for 21. Compare
-a lane against the same model's other lane, never against a lane with a different denominator.
-
-<!--section: id=findings title=Findings-->
-The scaffolding's measurable benefit is concentrated almost entirely in the one thing it uniquely
-supplies — knowledge of the user — and is neutral-to-slightly-negative everywhere else.
-
-### On general tasks the scaffolding does not help
-
-Across the four non-personalization tiers, on the two models every version ran:
+Across the four non-personalization tiers, on the two models every version ran, the ladder steps
+down from the bare control:
 
 | Version | T1–T4 pass@k | T1–T4 pass^k |
 |---|---:|---:|
-| RAW (control) | **96.9%** | 93.8% |
-| L5 | 96.9% | 90.6% |
-| L6 | 93.8% | 93.8% |
-| L7 | 90.6% | 87.5% |
+| **RAW** (control) | **96.9%** | 93.8% |
+| L5 · PAI v5.0.0 | 96.9% | 90.6% |
+| L6 · LifeOS v6.0.5 | 93.8% | 93.8% |
+| L7 · LifeOS v7.28.3 | 90.6% | 87.5% |
 
-The six-model sweep says the same thing with more samples: on T1–T4 the control reaches 95.8%
-pass@k and the newest version 93.8%. Nothing here is outside the noise this trial count can
-resolve — but nothing here is a gain either, and the direction is consistent.
+The six-model sweep says the same with three times the samples: control 95.8%, L7 93.8%. Each
+individual step is one or two prompts and sits inside what a two-trial design can resolve — so the
+honest reading is *no measurable general-task benefit, and a consistent hint of a small cost*, not
+*LifeOS makes models worse*.
 
-### On personalization the scaffolding is decisive
+On personalization the direction reverses and the size is not subtle: the control passes **40.0%**
+and every LifeOS version passes 90–100%. That is what the framework is for, and it works.
 
-Same two models, same harness, the tier that asks whether the answer uses the user's actual
-profile:
+Format compliance is the one axis that improves monotonically across releases — 70% under L5, 100%
+under L6, 96.4% under L7, the last dragged down entirely by Haiku 4.5 at 66.7%. Newer LifeOS is
+better at doing what it says it will do with its output.
 
-| Version | T5 pass@k | T5 pass^k |
-|---|---:|---:|
-| RAW (control) | **40.0%** | 10.0% |
-| L5 | 100.0% | 60.0% |
-| L6 | 90.0% | 70.0% |
-| L7 | 90.0% | 60.0% |
+The real regression is not on this page's tables. It is whether the Algorithm runs at all.
 
-This is the one place the effect is large, consistent across all three versions and both models,
-and mechanistically obvious: the control structurally cannot know the persona. It is worth
-stating plainly that this is close to a tautology — the scaffold wins the tier that measures
-whether the scaffold's contents were used. What the tier does establish is that the delivery
-mechanism *works*: the profile reaches the model and changes the answer.
+<!--section: id=algorithm title=Does the Algorithm still fire — and does that depend on the model?-->
+This is the sharpest result in the study, and it stayed invisible until the Algorithm-entry checks
+were separated from their opposite.
 
-### The bare control is much stronger than the earlier write-up claimed
+Three heavy prompts × two trials = six chances per lane to read the Algorithm before starting real
+work:
 
-Four of eight models reach **100% pass@k with no scaffolding at all** on the prompts they ran.
-The previously published claim that no model passes 100% bare was an artifact of counting five
-personalization prompts against six lanes that were never scheduled to run them — see the
-corrections below.
-
-### Per-model, newest version minus control
-
-The delta swings both ways and does not sort by model tier: the largest gain is on a mid-tier
-model, the largest loss on the most expensive reasoning lane. With one or two trials per prompt,
-a swing of one prompt is 4.8 to 6.3 points — so treat everything inside that band as noise and
-only the two outer bars as signal.
-
-### Cost is where the versions genuinely separate
-
-L5 spends about **10.9k output tokens per cell**; L6 spends 2.0k and L7 2.9k, and the control
-2.8k. That is a 4–5× premium for a task pass-rate inside the noise band, and it is the clearest
-version-over-version finding in the dataset. Format compliance moves the other way and is the
-one place the framework's newer versions demonstrably improve on the older: 70% under L5, 100%
-under L6, 96% under L7 — the last figure dragged down entirely by one small model at 67%.
-
-### Routing measures instruction-following, not enforcement
-
-Read the routing column with the limitation attached to it: the version with a classifier hook
-cannot authenticate inside the sandbox, and the newest version has no classifier at all. What
-the column actually shows is whether the model followed a written instruction to read the
-framework's Algorithm first — and the split is by vendor, not by version. Under the newest
-version, all three GPT lanes read it 100% of the time; the Claude lanes 40–50%.
-
-<!--section: id=reading title=How to read these numbers-->
-Each metric licenses a narrow claim. The wide version of that claim is usually wrong.
-
-| Metric | What it means | What it does **not** license |
+| Version | Claude models | GPT-5.6 models |
 |---|---|---|
-| **pass@k** | the prompt passed on at least one trial | that the lane is reliable — with two trials, pass@k rewards a coin flip that came up once |
-| **pass^k** | the prompt passed on *every* trial | that it would pass a third time; two trials is not a stability measurement |
-| **Routing** | the scaffold read its Algorithm before substantial work | anything about hook-based routing, which this method cannot measure at all |
-| **Format** | the version honoured its own documented output contract | quality — a perfectly formatted wrong answer scores 100% here |
-| **Output tokens** | mean tokens the model generated per cell | total cost of ownership; input context and cache traffic are not in this column |
-| **Hook files written** | how much runtime state the enforcement layer wrote | that the enforcement layer *helped* — it is evidence the layer ran, nothing more |
-| **Wall-clock** | mean seconds per cell | a latency comparison; cells ran concurrently and contended for CPU |
+| **L5** — prose routing in `CLAUDE.md` | sonnet-5 **5 of 6** | terra **6 of 6** |
+| **L6** — classifier hook | sonnet-5 **0 of 6** | terra **0 of 6** |
+| **L7** — prose in the system prompt, no router | sonnet-5, haiku-4.5, opus-5, opus-4.8 all **0 of 6**; fable-5 1 of 6 | terra, luna, sol all **6 of 6** |
 
-Two structural cautions apply to every number on this page:
+Three different things are happening here and they need separating:
 
-1. **A skipped check is not a failure.** The control structurally cannot know the synthetic
-   persona, so its personalization checks are skipped by design and excluded from both the
-   numerator and the denominator. Counting them as failures would have manufactured a scaffold
-   advantage out of the control's exemption.
-2. **The judge bar is permissive.** A rubric passes at 3 of 5, and most scores are 5s, so task
-   pass-rate separates versions weakly. Differences of one prompt are noise, not a result.
+1. **v5's prose routing worked, on both vendors.** Plain instructions in `CLAUDE.md`, no machinery,
+   and a Claude model entered the Algorithm on 5 of 6 heavy prompts. That is the existence proof
+   that Claude models *can* be driven into the Algorithm — they are not simply refusing.
+2. **v6's zero is confounded and should not be read as a regression.** Its router spawns a nested
+   model call, and this harness places no credentials inside a sandbox by design, so the classifier
+   cannot authenticate and fails safe. What the result *does* show is that v6 kept **no prose
+   fallback**: when the hook cannot run, nothing else carries the instruction.
+3. **v7's result is not confounded at all, and it is a model effect.** v7 ships no router. The
+   instruction lives in the system prompt as prose, identical for every model. Every GPT-5.6 lane
+   follows it 6 of 6. Every Claude lane ignores it 0 of 6.
 
-<!--section: id=corrections title=What went wrong, and how it was caught-->
-This is the part of the study worth reading first. A benchmark's credibility does not come from
-the absence of errors; it comes from how its own errors were caught, and from what happens to the
-numbers that were already published when they are.
+So: *does the Algorithm still fire?* **On GPT models, always. On Claude models, only under v5.**
+And *is that the framework or the model?* **Both, in different places** — v7 exposed a
+model-compliance gap that v5's stronger prose had been papering over.
 
-### Phases 1–3 are retracted in full
+The mirror-image check confirms nobody is merely over-triggering: on trivial prompts every version
+correctly stays out of the Algorithm, near-perfectly. The one exception is L5 on GPT, which enters
+it on half the trivial prompts too. v5's routing is louder in both directions.
 
-432 completed runs, discarded. Three independent faults, each sufficient alone:
+<!--section: id=versions title=Was an earlier version better?-->
+**Yes — at different things, and not the ones a version number implies.**
 
-1. **Sandbox escape.** Cells swapped the config directory but not `$HOME`, so the thousands of
-   home-relative references inside every scaffold resolved to the operator's live install. Nearly
-   half the published transcripts contained operator-tree content — including the *control*,
-   which read the operator's framework doctrine as its first action. A control that reads the
-   scaffold is not a control.
-2. **The scaffolded lanes were under-installed.** The file carrying each version's response
-   format and verification doctrine was never loaded, and the one attempt to activate the
-   Algorithm pointed at a path that silently did not resolve.
-3. **The routing metric measured a retired feature.** It grepped for mode banners against a
-   version whose own documentation says the modes were deleted.
+| | L5 · PAI v5.0.0 | L6 · LifeOS v6.0.5 | L7 · LifeOS v7.28.3 |
+|---|---|---|---|
+| Enters the Algorithm on heavy work | **best** — 5–6 of 6 | 0 of 6 (hook confounded) | 0 of 6 on Claude · 6 of 6 on GPT |
+| Stays out on trivial work | over-fires on GPT | perfect | perfect |
+| T1–T4 pass@k | **96.9%** | 93.8% | 90.6% |
+| T5 personalization pass@k | **100%** | 90% | 90% |
+| Format contract honoured | 70% | **100%** | 96.4% |
+| Output tokens per cell | 10.9k | **2.0k** | 2.9k |
 
-Faults 2 and 3 compound: with no Algorithm to load, the newest version went looking for one
-outside its sandbox, which is fault 1.
+L5 wins the two things LifeOS exists to do — enter the Algorithm, use the user's real context — and
+pays roughly **4–5× the generated tokens of every other configuration**, including the bare
+control, for a general task pass-rate no better than the control's. That is the trade in one line:
+**v5 buys Algorithm engagement with tokens.**
 
-### Phase 4's scaffolded lanes are superseded
+L6 is the cheapest configuration measured at 2.0k tokens per cell — below even the bare control —
+with a perfect format contract and the best T1–T4 pass^k. Its weakness is structural: it moved
+routing into machinery that fails silently and left nothing behind it.
 
-The next run was clean on all three counts and still measured the wrong thing. **Every scaffolded
-cell ran with its hook layer disabled** — the seatbelt's home read-deny emptied the environment of
-every Bun hook process. What survived was the prompt-and-context half of each framework; what was
-switched off was the enforcement half. For a framework whose founding principle is "code before
-prompts", that understates it in an unknown direction.
+L7 is the broadest. It is the only version tested across all eight models and it holds a
+near-perfect format contract on seven of them — and it is the only one where, for a Claude user,
+the Algorithm is effectively inert.
 
-The control is unaffected, because it registers no hooks.
+<!--section: id=models title=What this says about models, frameworks, and where the value is-->
+**The bare control is much stronger than the framing of #1715 assumed.** Four of the eight models
+reach **100% pass@k with no scaffolding at all** on the prompts they ran, and the entire spread
+across all four configurations on general tiers is about six points. On ordinary work in 2026, the
+model is doing the heavy lifting.
 
-### Turning the hooks on took three fixes, and each of the first two hid the next
+The per-model delta between LifeOS 7 and the bare control swings both ways and does not sort by
+model tier — the largest gain is on a mid-tier model and the largest loss on a premium reasoning
+lane. At one or two trials per prompt, only two of the eight sit outside the noise band.
 
-1. **The working directory.** Cwd inside the seatbelt's denied home emptied `process.env` for
-   every Bun hook. Fixed by running cells outside that tree.
-2. **Missing dependencies.** No staged install had `node_modules`, so hooks importing a YAML
-   parser died trying to write a tempdir the seatbelt refused. Fixed by installing dependencies
-   at staging time.
-3. **A shared staged home.** With hooks finally running, they wrote their runtime state back into
-   the single staged install every cell in the lane loaded — drift reminders, work state, session
-   names, and in one version the settings file itself. Cell N's context depended on what cell N−1
-   left behind, and under concurrency they raced. Fixed by giving every cell its own clone and
-   denying the template any write access.
+The single biggest model effect measured here is not capability at all — it is **instruction
+compliance**. Given the same system prompt telling them to read the Algorithm first, GPT-5.6 lanes
+comply 100% of the time and Claude lanes 0%. A framework built on written instruction inherits that
+difference wholesale.
 
-Nothing before fix 3 is a valid scaffolded measurement. The first two fixes did not make the layer
-work; they only exposed the next fault.
+Which points at the general lesson: **a framework's leverage is in what it supplies, not in what it
+instructs.** The one place LifeOS shows a large, unambiguous, reproducible effect is the tier where
+it *supplies* something the model could not otherwise have — the user's own goals, projects and
+preferences. Where it only *instructs* — enter the Algorithm, use this format — the effect is
+contingent on the model choosing to comply.
 
-### Two grader defects found while writing this page
+<!--section: id=unmeasured title=What this benchmark cannot see-->
+Read this before treating the numbers above as a verdict on LifeOS. A 21-prompt, single-turn,
+cold-start benchmark measures the shallowest layer of a Life OS, and most of what LifeOS is built
+to do is structurally out of frame:
 
-Both were one-directional — each could only ever move the numbers one way — and both were caught
-by asking why a figure looked wrong rather than by a test.
+- **Memory and continuity.** Every cell is a fresh session with no history. LifeOS's whole memory
+  architecture — work artifacts, decisions, learnings compounding across sessions — cannot produce
+  any value in a design where nothing is ever the second session.
+- **Recording work for future reference.** The ISA-per-task discipline pays off weeks later, when
+  someone asks *why did we do it that way*. No benchmark of one-shot prompts can price that.
+- **A personalized DA over time.** Voice, relationship, accumulated context about people and
+  projects, knowing when to push back — measured here only as "did it cite the right project".
+- **Multi-turn work.** Plan → approve → build → verify is the actual loop. Every prompt here is one
+  turn with no human in it.
+- **Enforcement that needs credentials.** Hooks that call a model — the router, satisfaction
+  capture — cannot authenticate inside a sandbox that deliberately holds none. Their contribution
+  is unmeasured by construction, not judged and found wanting.
+- **Skills, delegation, and autonomy.** On-demand skill packs, subagent fan-out, scheduled runs,
+  the dashboard — barely touched by 21 prompts and untouched by any of them at scale.
+- **The actual outcome.** A Life OS is judged on whether its user gets where they were going. That
+  is a longitudinal question, and this is a cross-sectional instrument.
 
-1. **A `skipped` check counted as a failure.** The golden set skips checks that cannot apply to a
-   version; the control's personalization checks are skipped because it cannot know the persona.
-   Counting them as failures turned a documented exemption into a penalty, and only the control
-   was ever exempt.
-2. **Prompts a lane never ran counted against it.** The personalization tier runs on two models by
-   design, but pass-rate divided by all 21 prompts regardless — so six of the eight model lanes
-   were graded on five prompts that were never sent to them. It cost a restricted lane up to 23.8
-   points and it is the sole source of the retracted claim that no model passes 100% bare.
+None of that excuses the results above; those numbers are real. It is a statement of scope. **What
+is measured here is the thin edge of LifeOS: single-turn task quality, instruction compliance,
+format, and grounding.** On the thin edge, the framework is roughly neutral except where it
+supplies context. Everything thicker is where its case still has to be made.
 
-Both are fixed, both have regression tests, and both are in the table below. The second is the
-more instructive: the number it produced was quoted as a headline finding for a full phase.
+<!--section: id=conclusions title=Conclusions-->
+### On LifeOS versions
 
-<!--section: id=limitations title=Limitations-->
-Stated plainly, because the alternative is having them discovered by a reader.
+- **Do not upgrade for task quality.** The general-task ladder is flat-to-slightly-down across
+  three releases. Nothing here recommends a newer version on those grounds.
+- **Do not revert either.** v5 costs 4–5× the tokens and has the weakest format contract. The move
+  is not to go back but to **port v5's prose-level Algorithm instruction forward into v7** — it is
+  the only mechanism in this study that got a Claude model into the Algorithm.
+- **Keep the format contract.** It is the one thing that improved monotonically, and it cost
+  nothing measurable.
+- **v6's lesson is the durable one:** routing that lives only in machinery disappears the moment
+  the machinery cannot run, and takes no fallback with it. Any enforcement worth having needs a
+  prose floor underneath it.
 
-- **Trial counts are low.** Most cells are one or two trials. Format compliance has been observed
-  varying run to run on an identical lane. Nothing here has five-trial confirmation.
-- **The judge bar is permissive, and demonstrably so.** A rubric passes at 3 of 5. Scores are
-  bimodal — 120 fives and 34 ones out of 220 — but the 35 threes are all admitted, and at least
-  one of them is a verdict whose own reasoning says the response *failed* the thing the rubric
-  asked about: it scored a 3, and passed, while the judge wrote that the answer "does not
-  acknowledge the standing preference". Raising the threshold to 4 would reclassify 16% of all
-  verdicts, which is larger than most of the version differences on this page.
-- **Cells could open tabs in the operator's own browser.** A cell that renders a page launches a
-  browser through the OS, which runs outside the seatbelt; leftover tabs pointing at cell
-  workspaces were found in the operator's browser session. Nothing flows back into the cell — the
-  boundary that matters for validity held, and containment scans clean — but "the cell cannot
-  affect the host" is not a claim this harness can make.
-- **Hook-based routing is structurally unmeasurable here.** One version's router spawns a nested
-  model call; the harness passes no credential into a sandbox by design, so that call cannot
-  authenticate. This is a deliberate isolation invariant, not a defect awaiting a fix — and it
-  means the routing column measures *unrouted* model behaviour for that version. The newest
-  version has no router at all. Read the routing column as instruction-following, not enforcement.
-- **Wall-clock is not comparable** at concurrency greater than one; cells contend for CPU.
-  Token counts, routing, format and pass-rates are unaffected.
-- **The control is bare of this framework, not of all scaffolding.** It still has the CLI's
-  bundled skills; one cell was observed invoking one of them.
-- **The control's cells were retained, not re-run**, on the argument stated above. If that
-  argument is ever doubted, the remedy is to re-run the control, not to hedge the numbers.
-- **A fresh install of two of the versions reports its own memory hooks as missing** — an upstream
-  packaging mismatch that puts a `CRITICAL` health banner into the model's context and sometimes
-  into its answer. Faithfully reproduced upstream behaviour, but it consumes context and shows up
-  in graded output.
+### On models
 
-<!--section: id=appendix title=Appendix — full tables-->
-Every number on this page is regenerated from the recorded per-cell artifacts by a single
-aggregation module, so the tables below and the charts above cannot disagree.
+- **For LifeOS-style written instruction, GPT-5.6 lanes comply and Claude lanes do not** — 100% vs
+  0% on the identical system prompt. If you run LifeOS on a Claude model and expect the Algorithm
+  to fire, verify it; today it does not.
+- **On ordinary work, pick the model, not the scaffold.** Four of eight models are already at 100%
+  bare on this prompt set.
+- **Small models pay their cost in form, not substance.** Haiku 4.5 holds its task pass-rate under
+  LifeOS and drops to 66.7% on format compliance — the opposite of the usual claim that small
+  models get worse under scaffolding.
+
+### How LifeOS could improve, in priority order
+
+1. **Make Algorithm entry deterministic instead of instructed.** The one thing this study shows
+   unambiguously is that written instruction is not reliable across vendors. A pre-tool gate, or a
+   hook that needs no credential, removes the model's vote.
+2. **Restore a prose fallback for every hook-enforced behaviour.** v6 proved what happens without
+   one.
+3. **Re-test with v5's routing language grafted onto v7.** That is a one-file experiment, and this
+   harness answers it in a few hundred cells.
+4. **Attack token cost deliberately.** v5 at 10.9k per cell is the ceiling; v6 at 2.0k is the floor
+   and it is *below the bare control*. Cost is a design variable, not a consequence.
+5. **Build evals for the parts that matter.** Multi-turn sessions, memory carried across sessions,
+   work artifacts reused, delegation. The single-turn edge is now measured; the rest is not.
+
+<!--section: id=caveats title=How much weight these numbers carry-->
+- **Trial counts are low.** One or two trials per prompt: a single prompt is worth 4.8–6.3 points.
+  Treat any smaller difference as noise. The Algorithm-entry result is the exception — 0 of 6
+  against 6 of 6, repeated across four Claude models and three GPT models, is not noise.
+- **The judge bar is permissive.** A rubric passes at 3 of 5. Scores are bimodal, and all 35 threes
+  count as passes — including at least one whose own reasoning says the answer failed the thing the
+  rubric asked about. Raising the bar to 4 would reclassify 16% of verdicts.
+- **v6's Algorithm result is confounded** by the credential boundary described above.
+- **Wall-clock is not comparable** across cells; they ran concurrently and contended for CPU. Token
+  counts, cost and pass-rates are unaffected.
+- **The control is bare of LifeOS, not of all scaffolding** — it still carries Claude Code's
+  bundled skills.
+- **This dataset is a re-run.** An earlier attempt was invalidated when its cells escaped their
+  sandbox, and a later one when every LifeOS cell turned out to be running with its hook layer
+  silently disabled. Both were caught by the harness's own gates, both were discarded rather than
+  patched, and these numbers come from a clean run with the enforcement layer verifiably live.
+  Eighteen harness and grader defects were found and fixed along the way, each with a regression
+  test; they are listed below, because a benchmark's credibility rests on how it catches its own
+  errors rather than on claiming it made none.
+
+<!--section: id=appendix title=Appendix-->
+Every figure on this page is regenerated from the recorded per-cell artifacts by one shared
+aggregation module, so the charts, the tables and the Markdown report cannot disagree. The harness,
+the frozen prompt set, and step-by-step instructions for reproducing this — or for pointing it at
+your own framework — are in the repository.

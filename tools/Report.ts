@@ -9,8 +9,8 @@ async function main() {
     "# Benchmark Report", "",
     `Golden set ${golden.version} · matrix: ${config.versions.map((version) => version.id).join(" / ")}`, "",
     "## Version × model", "",
-    "| Version | Model | Routing-correct | Format | Task pass@k | Task pass^k | Mean tokens | Mean wall-clock |",
-    "|---|---|---:|---:|---:|---:|---:|---:|",
+    "| Version | Model | Algorithm entered | Algorithm skipped | Mode markers | Format | Task pass@k | Task pass^k | Mean tokens | Mean wall-clock |",
+    "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
   ];
 
   const metricsFor = (version: string, model: string, tier?: string) =>
@@ -19,7 +19,8 @@ async function main() {
   for (const version of config.versions) {
     for (const model of lanesFor(config, version)) {
       const metric = await metricsFor(version.id, model.id);
-      lines.push(`| ${version.id} | ${model.id} | ${percent(metric.routingPass, metric.routingTotal)} | ` +
+      lines.push(`| ${version.id} | ${model.id} | ${percent(metric.algorithmEntryPass, metric.algorithmEntryTotal)} | ` +
+        `${percent(metric.algorithmSkipPass, metric.algorithmSkipTotal)} | ${percent(metric.routingPass, metric.routingTotal)} | ` +
         `${percent(metric.formatPass, metric.formatTotal)} | ${percent(metric.anyPass, metric.taskPrompts)} | ` +
         `${percent(metric.allPass, metric.taskPrompts)} | ${metric.cells ? (metric.outputTokens / metric.cells).toFixed(1) : "—"} | ` +
         `${metric.cells ? `${(metric.wallClockMs / metric.cells / 1000).toFixed(2)}s` : "—"} |`);
@@ -27,12 +28,13 @@ async function main() {
   }
 
   lines.push("", "## Per-tier breakdown", "",
-    "| Version | Model | Tier | Routing-correct | Format | Task pass@k | Task pass^k |", "|---|---|---|---:|---:|---:|---:|");
+    "| Version | Model | Tier | Algorithm entered | Algorithm skipped | Mode markers | Format | Task pass@k | Task pass^k |", "|---|---|---|---:|---:|---:|---:|---:|---:|");
   for (const version of config.versions) {
     for (const model of lanesFor(config, version)) {
       for (const tier of Object.keys(config.trials)) {
         const metric = await metricsFor(version.id, model.id, tier);
-        lines.push(`| ${version.id} | ${model.id} | ${tier} | ${percent(metric.routingPass, metric.routingTotal)} | ` +
+        lines.push(`| ${version.id} | ${model.id} | ${tier} | ${percent(metric.algorithmEntryPass, metric.algorithmEntryTotal)} | ` +
+          `${percent(metric.algorithmSkipPass, metric.algorithmSkipTotal)} | ${percent(metric.routingPass, metric.routingTotal)} | ` +
           `${percent(metric.formatPass, metric.formatTotal)} | ${percent(metric.anyPass, metric.taskPrompts)} | ` +
           `${percent(metric.allPass, metric.taskPrompts)} |`);
       }
@@ -60,6 +62,11 @@ async function main() {
     "",
     "**Mean wall-clock is not comparable** across runs at concurrency > 1; cells contend for CPU.",
     "Token counts, routing, format and pass-rates are unaffected.",
+    "",
+    "**Algorithm entry and Algorithm skip are separate columns.** `code:algorithm_read` asks",
+    "opposite questions on opposite prompts — enter the Algorithm for heavy work, do not enter",
+    "it for trivial work. Every version passes the skip checks, so a combined column dilutes the",
+    "entry rate toward a passing-looking number and hides the largest effect in this dataset.",
     "",
     "**A `skipped` grader is not a failure.** The control cannot know the synthetic persona, so",
     "the golden set skips its T5 grounding checks; those rows are excluded from pass@k rather",

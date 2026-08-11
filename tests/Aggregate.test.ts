@@ -19,7 +19,7 @@ const golden: GoldenSet = {
     {
       id: "t1-edit", tier: "T1",
       expectations: [
-        { grader: "code:algorithm_read", name: "algorithm_read" },
+        { grader: "code:algorithm_read", expect: "read", name: "algorithm_read" },
         { grader: "code:format_compliance", name: "format_compliance" },
         { grader: "file_contains", name: "edited" },
       ],
@@ -68,8 +68,51 @@ describe("latestRows", () => {
 describe("grader classification", () => {
   test("routing and format are keyed by grader type, not by name prefix", () => {
     const kinds = graderKinds(golden);
-    expect([...kinds.routing]).toEqual(["t1-edit|algorithm_read"]);
+    expect([...kinds.algorithmEntry]).toEqual(["t1-edit|algorithm_read"]);
     expect([...kinds.format]).toEqual(["t1-edit|format_compliance"]);
+    expect([...kinds.routing]).toEqual([]);
+  });
+
+  // The single largest effect in this benchmark was hidden by averaging these together: every
+  // version correctly skips the Algorithm for "thanks, that's all for now", so folding the skip
+  // checks into the entry rate drags a 0-of-6 up toward a passing-looking number.
+  test("algorithm_read splits on the golden set's own expect field, not on the grader name", () => {
+    const split: GoldenSet = {
+      version: "test",
+      prompts: [{
+        id: "t3-build", tier: "T3",
+        expectations: [
+          { grader: "code:algorithm_read", expect: "read", name: "algorithm_entered" },
+          { grader: "code:algorithm_read", expect: "not_read", name: "algorithm_skipped" },
+          { grader: "code:routing", expect_mode: "heavy", name: "routed_heavy" },
+        ],
+      }],
+    };
+    const kinds = graderKinds(split);
+    expect([...kinds.algorithmEntry]).toEqual(["t3-build|algorithm_entered"]);
+    expect([...kinds.algorithmSkip]).toEqual(["t3-build|algorithm_skipped"]);
+    expect([...kinds.routing]).toEqual(["t3-build|routed_heavy"]);
+  });
+
+  test("an entry check that fails does not borrow credit from a passing skip check", async () => {
+    const split: GoldenSet = {
+      version: "test",
+      prompts: [
+        { id: "t3-build", tier: "T1", expectations: [{ grader: "code:algorithm_read", expect: "read", name: "algorithm_entered" }] },
+        { id: "t1-ack", tier: "T1", expectations: [{ grader: "code:algorithm_read", expect: "not_read", name: "algorithm_skipped" }] },
+      ],
+    };
+    const rows = [
+      row({ version: "L7", model: "sonnet-5", prompt_id: "t3-build", trial: 1, grader: "algorithm_entered", status: "fail" }),
+      row({ version: "L7", model: "sonnet-5", prompt_id: "t1-ack", trial: 1, grader: "algorithm_skipped", status: "pass" }),
+    ];
+    const metric = await laneMetrics({ rows, golden: split, config, version: "L7", model: "sonnet-5", resultsRoot: await emptyResults() });
+    expect(metric.algorithmEntryPass).toBe(0);
+    expect(metric.algorithmEntryTotal).toBe(1);
+    expect(metric.algorithmSkipPass).toBe(1);
+    expect(metric.algorithmSkipTotal).toBe(1);
+    // And neither leaks into the task bucket.
+    expect(metric.taskPrompts).toBe(0);
   });
 
   test("a prompt whose only expectations are routing/format is not a task prompt", () => {
@@ -86,8 +129,8 @@ describe("laneMetrics", () => {
       row({ version: "L7", model: "sonnet-5", prompt_id: "t1-edit", trial: 1, grader: "edited", status: "pass" }),
     ];
     const metric = await laneMetrics({ rows, golden, config, version: "L7", model: "sonnet-5", tier: "T1", resultsRoot: await emptyResults() });
-    expect(metric.routingPass).toBe(1);
-    expect(metric.routingTotal).toBe(1);
+    expect(metric.algorithmEntryPass).toBe(1);
+    expect(metric.algorithmEntryTotal).toBe(1);
     expect(metric.formatPass).toBe(0);
     expect(metric.formatTotal).toBe(1);
     expect(metric.anyPass).toBe(1);
@@ -127,9 +170,9 @@ describe("laneMetrics", () => {
       row({ version: "RAW", model: "sonnet-5", prompt_id: "t1-edit", trial: 1, grader: "edited", status: "pass" }),
     ];
     const metric = await laneMetrics({ rows, golden, config, version: "RAW", model: "sonnet-5", tier: "T1", resultsRoot: await emptyResults() });
-    expect(metric.routingTotal).toBe(0);
+    expect(metric.algorithmEntryTotal).toBe(0);
     expect(metric.formatTotal).toBe(0);
-    expect(percent(metric.routingPass, metric.routingTotal)).toBe("—");
+    expect(percent(metric.algorithmEntryPass, metric.algorithmEntryTotal)).toBe("—");
   });
 
   test("pass@k counts a prompt passing on one trial; pass^k requires every trial", async () => {

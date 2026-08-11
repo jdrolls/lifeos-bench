@@ -24,7 +24,7 @@ export type Row = {
   rubric?: string;
 };
 
-export type Expectation = { grader: string; name?: string; rubric?: string; min_score?: number };
+export type Expectation = { grader: string; name?: string; rubric?: string; min_score?: number; expect?: string; expect_mode?: string };
 export type Prompt = { id: string; tier: string; prompt?: string; expectations: Expectation[] };
 export type GoldenSet = { version: string; prompts: Prompt[] };
 export type VersionConfig = { id: string; models_allowlist?: string[] | null; [key: string]: unknown };
@@ -45,8 +45,15 @@ export type CellFacts = {
 };
 
 export type LaneMetrics = {
+  /** `code:routing` only — the version's own mode/banner markers. Null for versions with none. */
   routingPass: number;
   routingTotal: number;
+  /** Did the scaffold read its Algorithm before HEAVY work (build, cross-module debug, hidden scope)? */
+  algorithmEntryPass: number;
+  algorithmEntryTotal: number;
+  /** Did it correctly NOT read it for trivial work? Every version passes these; kept separate for that reason. */
+  algorithmSkipPass: number;
+  algorithmSkipTotal: number;
   formatPass: number;
   formatTotal: number;
   /** Prompts passing on at least one trial (pass@k) and on every trial (pass^k). */
@@ -85,22 +92,34 @@ export function latestRows(...sources: string[]): Row[] {
 }
 
 /**
- * Routing and format are identified by grader TYPE in the golden set, never by name prefix:
- * T4's trap graders have descriptive names and must still count as routing. They are kept in
- * separate buckets because a version can honour its output contract while having no modes at
- * all — averaging the two together is what produced the retracted v7 headline.
+ * Grader buckets, identified by TYPE and by the golden set's own `expect` field — never by name
+ * prefix, because T4's trap graders have descriptive names and must still be classified.
+ *
+ * FOUR buckets, not two. `code:algorithm_read` asks opposite questions on opposite prompts:
+ * on heavy work it asks whether the Algorithm was ENTERED, and on trivial work whether it was
+ * correctly SKIPPED. Every version passes the skip checks — nothing reads an Algorithm to
+ * answer "thanks, that's all for now" — so averaging the two together dilutes the entry rate
+ * toward the skip rate and hides the single largest effect in this benchmark. That is the same
+ * conflation mistake that produced the retracted v7 headline, one level down.
  */
-export function graderKinds(golden: GoldenSet): { routing: Set<string>; format: Set<string> } {
+export function graderKinds(golden: GoldenSet): {
+  routing: Set<string>; format: Set<string>; algorithmEntry: Set<string>; algorithmSkip: Set<string>;
+} {
   const routing = new Set<string>();
   const format = new Set<string>();
+  const algorithmEntry = new Set<string>();
+  const algorithmSkip = new Set<string>();
   for (const prompt of golden.prompts) {
     for (const expectation of prompt.expectations) {
       const name = `${prompt.id}|${expectation.name ?? expectation.grader}`;
-      if (expectation.grader === "code:routing" || expectation.grader === "code:algorithm_read") routing.add(name);
+      if (expectation.grader === "code:routing") routing.add(name);
+      if (expectation.grader === "code:algorithm_read") {
+        (expectation.expect === "not_read" ? algorithmSkip : algorithmEntry).add(name);
+      }
       if (expectation.grader === "code:format_compliance") format.add(name);
     }
   }
-  return { routing, format };
+  return { routing, format, algorithmEntry, algorithmSkip };
 }
 
 /** Prompts carrying at least one graded expectation that is not routing or format. */
@@ -161,7 +180,9 @@ export async function laneMetrics(options: LaneOptions): Promise<LaneMetrics> {
   const kinds = graderKinds(golden);
   const prompts = scheduledPrompts(golden, config, model, tier);
   const metrics: LaneMetrics = {
-    routingPass: 0, routingTotal: 0, formatPass: 0, formatTotal: 0,
+    routingPass: 0, routingTotal: 0,
+    algorithmEntryPass: 0, algorithmEntryTotal: 0, algorithmSkipPass: 0, algorithmSkipTotal: 0,
+    formatPass: 0, formatTotal: 0,
     anyPass: 0, allPass: 0, taskPrompts: taskPromptCount(prompts),
     cells: 0, outputTokens: 0, wallClockMs: 0, costUsd: 0,
     hookFilesWritten: 0, hookCells: 0, statuses: {},
@@ -178,6 +199,8 @@ export async function laneMetrics(options: LaneOptions): Promise<LaneMetrics> {
         const name = `${prompt.id}|${row.grader}`;
         if (row.status === "skipped") continue;
         if (kinds.routing.has(name)) { metrics.routingTotal++; if (row.status === "pass") metrics.routingPass++; }
+        if (kinds.algorithmEntry.has(name)) { metrics.algorithmEntryTotal++; if (row.status === "pass") metrics.algorithmEntryPass++; }
+        if (kinds.algorithmSkip.has(name)) { metrics.algorithmSkipTotal++; if (row.status === "pass") metrics.algorithmSkipPass++; }
         if (kinds.format.has(name)) { metrics.formatTotal++; if (row.status === "pass") metrics.formatPass++; }
       }
 
@@ -189,6 +212,7 @@ export async function laneMetrics(options: LaneOptions): Promise<LaneMetrics> {
       const task = trialRows.filter((row) => {
         const name = `${prompt.id}|${row.grader}`;
         return !kinds.routing.has(name) && !kinds.format.has(name) &&
+          !kinds.algorithmEntry.has(name) && !kinds.algorithmSkip.has(name) &&
           row.status !== "pending_judge" && row.status !== "skipped";
       });
       if (task.length) passes.push(task.every((row) => row.status === "pass"));
